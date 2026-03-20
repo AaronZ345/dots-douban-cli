@@ -7,6 +7,7 @@ import { getCurrentUserProfile, getUserCollection } from '../api/index.js';
 import { withErrorHandler } from '../utils/error.js';
 import { parsePositiveInt } from '../utils/parsing.js';
 import { withSpinner } from '../utils/spinner.js';
+import { withPagination } from '../utils/pagination.js';
 
 type CliConfig = {
   user?: string;
@@ -80,52 +81,48 @@ export function registerUserCommands(program: Command): void {
         return;
       }
 
-      // 交互式翻页模式
-      const readline = await import('node:readline');
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      const question = (q: string) => new Promise<string>((resolve) => rl.question(q, resolve));
-
       let page = parsePositiveInt(opts.page, '--page', 1);
-      let running = true;
-      while (running) {
-        // 获取比需要的多一条，用于判断是否有下一页
-        const fetchLimit = (page - 1) * limit + limit + 1;
-        const allItems = await withSpinner(
-          `正在获取用户 ${userId} 的${statusLabel}片单...`,
-          () => getUserCollection(userId, status, fetchLimit),
-          true
-        );
 
-        const start = (page - 1) * limit;
-        const items = allItems.slice(start, start + limit);
-        const hasMore = allItems.length > start + limit;
+      await withPagination({
+        startPage: page,
+        prompt: '\n按回车加载下一页，输入 q 退出: ',
+        fetchPage: async (currentPage) => {
+          // 获取比需要的多一条，用于判断是否有下一页
+          const fetchLimit = (currentPage - 1) * limit + limit + 1;
+          const allItems = await withSpinner(
+            `正在获取用户 ${userId} 的${statusLabel}片单...`,
+            () => getUserCollection(userId, status, fetchLimit),
+            true
+          );
 
-        console.log(`\n👤 用户 ${userId} ${statusLabel}（第 ${page} 页）\n`);
+          const start = (currentPage - 1) * limit;
+          const items = allItems.slice(start, start + limit);
+          const hasMore = allItems.length > start + limit;
 
-        if (items.length === 0) {
-          console.log('暂无更多记录');
-          break;
+          return { items, hasMore };
+        },
+        renderPage: (items, currentPage, _total, hasMore) => {
+          const start = (currentPage - 1) * limit;
+          console.log(`
+👤 用户 ${userId} ${statusLabel}（第 ${currentPage} 页）
+`);
+
+          if (items.length === 0) {
+            console.log('暂无更多记录');
+            return;
+          }
+
+          items.forEach((item, i) => {
+            const rating = item.rating > 0 ? `⭐${item.rating}` : '⭐-';
+            const date = item.date || '-';
+            console.log(`${(start + i + 1).toString().padStart(2)}. ${item.title} ${rating} ${date}`);
+          });
+
+          if (!hasMore) {
+            console.log('\n已到最后一页');
+          }
         }
-
-        items.forEach((item, i) => {
-          const rating = item.rating > 0 ? `⭐${item.rating}` : '⭐-';
-          const date = item.date || '-';
-          console.log(`${(start + i + 1).toString().padStart(2)}. ${item.title} ${rating} ${date}`);
-        });
-
-        if (!hasMore) {
-          console.log('\n已到最后一页');
-          break;
-        }
-
-        const answer = await question('\n按回车加载下一页，输入 q 退出: ');
-        if (answer.toLowerCase() === 'q') {
-          running = false;
-        } else {
-          page++;
-        }
-      }
-      rl.close();
+      });
     }));
 
   program

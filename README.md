@@ -30,7 +30,6 @@ Douban CLI - browse movies, TV shows, books, and personal collections from the t
 - `me` 我的片单（配置用户 ID 或登录态自动识别）
 - `config` 本地配置
 - `list` 热门豆列
-- `celebrity` 影人信息
 
 ### Auth & Social / 登录与社交
 - `login` 登录并缓存 Cookie

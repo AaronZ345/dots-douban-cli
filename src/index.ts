@@ -2,7 +2,7 @@
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
 import { registerBookCommands } from './commands/book.js';
-import { registerCelebrityCommands } from './commands/celebrity.js';
+
 import { registerListCommands } from './commands/list.js';
 import { registerMovieCommands } from './commands/movie.js';
 import { registerUserCommands } from './commands/user.js';
@@ -27,7 +27,7 @@ program.configureHelp({
     const usage = `用法: douban <command> [options]\n`;
 
     const groups: Record<string, string[]> = {
-      '电影': ['hot', 'tv', 'rank', 'top250', 'now', 'coming', 'weekly', 'movie', 'rating', 'reviews', 'comments', 'celebrity'],
+      '电影': ['hot', 'tv', 'rank', 'top250', 'now', 'coming', 'weekly', 'movie', 'rating', 'reviews', 'comments'],
       '书籍': ['book'],
       '用户': ['me', 'user', 'config', 'list', 'login', 'whoami', 'logout', 'mark', 'unmark', 'rate', 'comment', 'review', 'feed', 'stats', 'export', 'follow', 'unfollow'],
       '搜索': ['search']
@@ -65,7 +65,7 @@ program.configureHelp({
 registerMovieCommands(program);
 registerBookCommands(program);
 registerUserCommands(program);
-registerCelebrityCommands(program);
+
 registerListCommands(program);
 registerAuthCommands(program);
 registerMarkCommands(program);
