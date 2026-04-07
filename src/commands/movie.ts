@@ -352,6 +352,7 @@ export function registerMovieCommands(program: Command): void {
     .command('now')
     .description('获取正在热映电影')
     .option('-c, --city <city>', '城市名称（北京/上海/苏州/...）', '北京')
+    .option('-n, --limit <n>', '返回数量')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler((args) => ({
       command: 'now',
@@ -363,11 +364,16 @@ export function registerMovieCommands(program: Command): void {
       if (!cityCode) {
         throw new Error('城市不能为空');
       }
-      const items = await withSpinner(
+      let items = await withSpinner(
         `正在获取${cityInput}热映电影...`,
         () => getNowPlaying(cityCode),
         !opts.json
       );
+
+      if (opts.limit) {
+        const limit = parsePositiveInt(opts.limit, '--limit', items.length);
+        items = items.slice(0, limit);
+      }
 
       if (opts.json) {
         console.log(JSON.stringify(items, null, 2));
