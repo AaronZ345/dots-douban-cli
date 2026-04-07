@@ -17,9 +17,19 @@ export async function withPagination<T>({
   startPage = 1,
   prompt = '按回车加载下一页，输入 q 退出: '
 }: PaginationOptions<T>): Promise<void> {
+  // Non-interactive mode: just show first page
+  if (!process.stdin.isTTY) {
+    const { items, total, hasMore } = await fetchPage(startPage);
+    renderPage(items, startPage, total, hasMore);
+    return;
+  }
+
   const readline = await import('node:readline');
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const question = (q: string) => new Promise<string>((resolve) => rl.question(q, resolve));
+  const question = (q: string) => new Promise<string>((resolve, reject) => {
+    rl.question(q, resolve);
+    rl.once('close', () => reject(new Error('readline closed')));
+  });
 
   let page = startPage;
 
@@ -33,11 +43,16 @@ export async function withPagination<T>({
         break;
       }
 
-      const answer = await question(prompt);
-      if (answer.toLowerCase() === 'q') {
-        running = false;
-      } else {
-        page++;
+      try {
+        const answer = await question(prompt);
+        if (answer.toLowerCase() === 'q') {
+          running = false;
+        } else {
+          page++;
+        }
+      } catch {
+        // readline closed (e.g., piped input ended)
+        break;
       }
     }
   } finally {
