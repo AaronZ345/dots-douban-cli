@@ -1,4 +1,5 @@
 import { cleanText, extractWindowJsonObject, fetchHtml, fetchJson, normalizeTitle } from './common.js';
+import { debug } from '../utils/debug.js';
 
 export interface SearchItem {
   id: string;
@@ -80,7 +81,7 @@ export async function searchMovies(keyword: string, start = 0, limit = 20): Prom
     suggestYears = await fetchSuggestYears(query);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[search] suggest 年份接口失败: ${message}`);
+    debug('search', `suggest 年份接口失败: ${message}`);
   }
 
   try {
@@ -120,7 +121,7 @@ export async function searchMovies(keyword: string, start = 0, limit = 20): Prom
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[search] JSON 搜索接口失败，回退 HTML 解析: ${message}`);
+    debug('search', `JSON 搜索接口失败，回退 HTML 解析: ${message}`);
   }
 
   const pageUrl = `https://search.douban.com/movie/subject_search?search_text=${encodeURIComponent(query)}&cat=1002&start=${start}`;

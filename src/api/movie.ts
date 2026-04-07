@@ -1,4 +1,5 @@
 import { BASE, cleanText, extractField, fetchHtml, fetchJson, isChallengePage, normalizeTitle } from './common.js';
+import { debug } from '../utils/debug.js';
 
 interface Subject {
   id: string;
@@ -39,6 +40,8 @@ export interface MovieDetail {
   review_count: number;
   summary: string;
   url: string;
+  episodes_count?: number;
+  episodes_info?: string;
 }
 
 export interface ComingItem {
@@ -117,7 +120,7 @@ function parseCountFromText(raw: string): number {
 }
 
 function extractCountByPath(html: string, path: 'comments' | 'reviews'): number {
-  const regex = new RegExp(`<a[^>]*href="[^"]*\\/${path}[^\"]*"[^>]*>([\\s\\S]*?)<\\/a>`, 'g');
+  const regex = new RegExp(`<a[^>]*href="[^"]*\\/${path}[^"]*"[^>]*>([\\s\\S]*?)<\\/a>`, 'g');
   let max = 0;
   let match;
 
@@ -244,7 +247,7 @@ export async function getMovieDetail(id: string): Promise<MovieDetail> {
     if (parsed) return parsed;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[movie] 主页面解析失败，进入回退逻辑: ${message}`);
+    debug('movie', `主页面解析失败，进入回退逻辑: ${message}`);
   }
 
   const detail: MovieDetail = {
@@ -313,7 +316,7 @@ export async function getMovieDetail(id: string): Promise<MovieDetail> {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[movie] subject_abstract 回退失败: ${message}`);
+    debug('movie', `subject_abstract 回退失败: ${message}`);
   }
 
   try {
@@ -368,7 +371,71 @@ export async function getMovieDetail(id: string): Promise<MovieDetail> {
     if (mobile.url) detail.url = mobile.url;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[movie] mobile API 回退失败: ${message}`);
+    debug('movie', `mobile API 回退失败: ${message}`);
+  }
+
+  // Try TV API for episodes count (works for TV shows)
+  try {
+    const tv = await fetchJson<{
+      title?: string;
+      year?: string | number;
+      original_title?: string;
+      intro?: string;
+      rating?: { value?: number };
+      directors?: Array<{ name?: string }>;
+      actors?: Array<{ name?: string }>;
+      genres?: string[];
+      countries?: string[];
+      durations?: string[];
+      languages?: string[];
+      aka?: string[];
+      pubdate?: string[];
+      comment_count?: number;
+      review_count?: number;
+      episodes_count?: number;
+      episodes_info?: string;
+      url?: string;
+    }>(`https://m.douban.com/rexxar/api/v2/tv/${movieId}`, {
+      Referer: `https://m.douban.com/movie/subject/${movieId}/`
+    });
+
+    // Only use TV data if we got valid response
+    if (tv.title) {
+      if (!detail.title) detail.title = normalizeTitle(tv.title);
+      if (!detail.year && tv.year) detail.year = cleanText(String(tv.year));
+      if (!detail.original_title && tv.original_title) detail.original_title = normalizeTitle(tv.original_title);
+      if (detail.rating === '-' && typeof tv.rating?.value === 'number') detail.rating = tv.rating.value.toFixed(1);
+      if (detail.directors.length === 0 && Array.isArray(tv.directors) && tv.directors.length > 0) {
+        detail.directors = tv.directors.map((person) => cleanText(person.name || '')).filter(Boolean);
+      }
+      if (detail.actors.length === 0 && Array.isArray(tv.actors) && tv.actors.length > 0) {
+        detail.actors = tv.actors.map((person) => cleanText(person.name || '')).filter(Boolean);
+      }
+      if (detail.genres.length === 0) assignArrayIfNotEmpty(detail, 'genres', tv.genres);
+      if (detail.countries.length === 0) assignArrayIfNotEmpty(detail, 'countries', tv.countries);
+      if (detail.durations.length === 0) assignArrayIfNotEmpty(detail, 'durations', tv.durations);
+      if (detail.languages.length === 0) assignArrayIfNotEmpty(detail, 'languages', tv.languages);
+      if (detail.aka.length === 0) assignArrayIfNotEmpty(detail, 'aka', tv.aka);
+      if (detail.pubdate.length === 0) assignArrayIfNotEmpty(detail, 'pubdate', tv.pubdate);
+      if (detail.comment_count === 0 && typeof tv.comment_count === 'number' && Number.isFinite(tv.comment_count)) {
+        detail.comment_count = Math.max(0, Math.trunc(tv.comment_count));
+      }
+      if (detail.review_count === 0 && typeof tv.review_count === 'number' && Number.isFinite(tv.review_count)) {
+        detail.review_count = Math.max(0, Math.trunc(tv.review_count));
+      }
+      if (!detail.summary && tv.intro) detail.summary = cleanText(tv.intro);
+      if (tv.url) detail.url = tv.url;
+    }
+    // Always try to get episodes_count and episodes_info from TV API
+    if (typeof tv.episodes_count === 'number' && Number.isFinite(tv.episodes_count) && tv.episodes_count > 0) {
+      detail.episodes_count = tv.episodes_count;
+    }
+    if (tv.episodes_info) {
+      detail.episodes_info = cleanText(tv.episodes_info);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    debug('movie', `TV API 回退失败: ${message}`);
   }
 
   if (!detail.title) throw new Error(`获取电影详情失败，ID=${movieId}`);

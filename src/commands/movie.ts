@@ -293,7 +293,7 @@ export function registerMovieCommands(program: Command): void {
       command: 'top250',
       suggestion: '可尝试：douban top250 --page 2'
     }, async (opts) => {
-      let page = parsePositiveInt(opts.page, '--page', 1);
+      const page = parsePositiveInt(opts.page, '--page', 1);
       const total = 250;
       const limit = 25;
 
@@ -479,6 +479,11 @@ export function registerMovieCommands(program: Command): void {
         console.log(`类型: ${formatDetailList(detail.genres)}`);
         console.log(`国家: ${formatDetailList(detail.countries)}`);
         console.log(`时长: ${formatDetailList(detail.durations)}`);
+        if (detail.episodes_info) {
+          console.log(`集数: ${detail.episodes_info}`);
+        } else if (detail.episodes_count) {
+          console.log(`集数: ${detail.episodes_count}`);
+        }
         console.log(`语言: ${formatDetailList(detail.languages)}`);
         console.log(`短评: ${detail.comment_count.toLocaleString()}`);
         console.log(`影评: ${detail.review_count.toLocaleString()}`);
@@ -623,7 +628,7 @@ export function registerMovieCommands(program: Command): void {
       }
       const id = normalizeMovieIdInput(movieId);
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
-      let page = parsePositiveInt(opts.page, '--page', 1);
+      const page = parsePositiveInt(opts.page, '--page', 1);
 
       if (opts.json) {
         // JSON 模式：单次输出
@@ -702,7 +707,7 @@ export function registerMovieCommands(program: Command): void {
       const id = normalizeMovieIdInput(movieId);
       const orderBy = opts.latest ? 'latest' : 'hot';
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
-      let page = parsePositiveInt(opts.page, '--page', 1);
+      const page = parsePositiveInt(opts.page, '--page', 1);
 
       if (opts.json) {
         // JSON 模式：单次输出

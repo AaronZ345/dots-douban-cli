@@ -11,7 +11,9 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "postbuild": "chmod +x dist/index.js",
-    "ensure-bin-permission": "chmod +x dist/index.js"
+    "ensure-bin-permission": "chmod +x dist/index.js",
+    "lint": "eslint src",
+    "test": "vitest run"
   },
   "keywords": [
     "douban",
@@ -42,7 +44,11 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "typescript": "^5.0.0"
+    "@typescript-eslint/eslint-plugin": "^8.57.1",
+    "@typescript-eslint/parser": "^8.57.1",
+    "eslint": "^8.57.1",
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.0"
   },
   "files": [
     "dist",

@@ -81,7 +81,7 @@ export function registerUserCommands(program: Command): void {
         return;
       }
 
-      let page = parsePositiveInt(opts.page, '--page', 1);
+      const page = parsePositiveInt(opts.page, '--page', 1);
 
       await withPagination({
         startPage: page,
