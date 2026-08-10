@@ -1,27 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
 import { ensureAuth } from '../auth.js';
-import { BASE, FETCH_TIMEOUT_MS, UA } from '../api/common.js';
-import { resolveCk, unmarkSubject } from '../api/index.js';
+import { SUBJECT_ACTIONS, unmarkSubject, updateSubjectInterest } from '../api/index.js';
 import { withErrorHandler } from '../utils/error.js';
-import { formEncode, isNumericId } from '../utils/parsing.js';
+import { isNumericId } from '../utils/parsing.js';
 import { withSpinner } from '../utils/spinner.js';
 import { parseDelaySeconds, sleep } from '../utils/timing.js';
 
 type Interest = 'wish' | 'collect' | 'do';
-
-interface InterestPayload {
-  interest: Interest;
-  rating?: number;
-  comment?: string;
-}
-
-interface InterestResponse {
-  r: number;
-  msg?: string;
-  code?: number;
-  [key: string]: unknown;
-}
 
 interface BatchItem {
   id: string;
@@ -32,19 +18,6 @@ interface BatchItem {
 interface BatchResult {
   ok: boolean;
 }
-
-const INTEREST_PATH = (id: string) => `${BASE}/j/subject/${id}/interest`;
-const CK_ERROR_PATTERNS: RegExp[] = [
-  /\bck\b/i,
-  /invalid\s*token/i,
-  /token\s*invalid/i,
-  /token\s*expired/i,
-  /ck\s*expired/i,
-  /ck[^\n]{0,20}(?:无效|过期)/i,
-  /(?:无效|过期)[^\n]{0,20}ck/i,
-  /请先登录/i,
-  /更新[^\n]{0,20}登录状态/i
-];
 
 function parseNumericId(value: string): string {
   const id = value.trim();
@@ -105,74 +78,6 @@ function parseCommentFile(filePath: string): BatchItem[] {
   });
 }
 
-async function submitInterest(
-  id: string,
-  payload: InterestPayload,
-  cookieHeader: string,
-  existingCk?: string
-): Promise<InterestResponse> {
-  const send = async (ck: string): Promise<InterestResponse> => {
-    const form = formEncode({
-      interest: payload.interest,
-      rating: payload.rating ? String(payload.rating) : '',
-      comment: payload.comment ? payload.comment : '',
-      ck
-    });
-
-    const res = await fetch(INTEREST_PATH(id), {
-      method: 'POST',
-      headers: {
-        'User-Agent': UA,
-        Cookie: cookieHeader,
-        Referer: `${BASE}/subject/${id}/`,
-        Origin: BASE,
-        'X-Requested-With': 'XMLHttpRequest',
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-      },
-      body: form,
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
-    });
-
-    const text = await res.text();
-    let parsed: InterestResponse | null = null;
-    try {
-      parsed = JSON.parse(text) as InterestResponse;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`[mark] 解析兴趣接口 JSON 失败: ${message}`);
-      parsed = null;
-    }
-
-    if (!res.ok) {
-      const message = parsed?.msg || `HTTP ${res.status}: ${text.slice(0, 120)}`;
-      throw new Error(message);
-    }
-
-    if (!parsed || typeof parsed.r !== 'number') {
-      throw new Error(`返回结果异常: ${text.slice(0, 120)}`);
-    }
-
-    if (parsed.r !== 0) {
-      throw new Error(parsed.msg || `豆瓣接口错误 code=${parsed.code ?? 'unknown'}`);
-    }
-
-    return parsed;
-  };
-
-  const initialCk = await resolveCk(cookieHeader, existingCk, id);
-  try {
-    return await send(initialCk);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!CK_ERROR_PATTERNS.some((pattern) => pattern.test(message))) {
-      throw error;
-    }
-
-    const refreshedCk = await resolveCk(cookieHeader, undefined, id, { forceRefresh: true });
-    return send(refreshedCk);
-  }
-}
-
 function selectInterestFromOptions(opts: { wish?: boolean; watched?: boolean; watching?: boolean }): Interest {
   const selected = [opts.wish, opts.watched, opts.watching].filter(Boolean).length;
   if (selected !== 1) {
@@ -212,6 +117,7 @@ export function registerMarkCommands(program: Command): void {
       options: '状态：--wish / --watched / --watching（三选一）',
       suggestion: '可尝试：douban mark 1292052 --wish'
     }, async (id: string | undefined, opts) => {
+      if (!id && !opts.file) throw new Error('请提供电影 ID 或使用 --file');
       const interest = selectInterestFromOptions(opts);
       const delaySeconds = parseDelaySeconds(opts.delay);
       const items = opts.file ? parseIdFile(String(opts.file)) : [{ id: parseNumericId(id || '') }];
@@ -224,7 +130,7 @@ export function registerMarkCommands(program: Command): void {
         try {
           await withSpinner(
             `正在标记 ${item.id}...`,
-            () => submitInterest(item.id, { interest }, auth.cookies, auth.ck),
+            () => updateSubjectInterest(SUBJECT_ACTIONS.movie, item.id, { interest }, auth.cookies, auth.ck),
             !opts.json
           );
           results.push({ id: item.id, ok: true });
@@ -292,7 +198,13 @@ export function registerMarkCommands(program: Command): void {
         try {
           await withSpinner(
             `正在提交评分 ${item.id}...`,
-            () => submitInterest(item.id, { interest: 'collect', rating: score }, auth.cookies, auth.ck),
+            () => updateSubjectInterest(
+              SUBJECT_ACTIONS.movie,
+              item.id,
+              { interest: 'collect', rating: score },
+              auth.cookies,
+              auth.ck
+            ),
             !opts.json
           );
           results.push({ id: item.id, score, ok: true });
@@ -355,7 +267,13 @@ export function registerMarkCommands(program: Command): void {
         try {
           await withSpinner(
             `正在发布短评 ${item.id}...`,
-            () => submitInterest(item.id, { interest: 'collect', comment }, auth.cookies, auth.ck),
+            () => updateSubjectInterest(
+              SUBJECT_ACTIONS.movie,
+              item.id,
+              { interest: 'collect', comment },
+              auth.cookies,
+              auth.ck
+            ),
             !opts.json
           );
           results.push({ id: item.id, ok: true });
@@ -390,11 +308,7 @@ export function registerMarkCommands(program: Command): void {
       suggestion: '可尝试：douban unmark 1292052'
     }, async (id: string | undefined, opts) => {
       if (!id && !opts.file) {
-        console.log('\n🗑️  取消标记 - 请指定电影 ID\n');
-        console.log('用法: douban unmark <电影ID>\n');
-        console.log('批量: douban unmark --file ids.txt\n');
-        console.log('示例: douban unmark 1292052');
-        return;
+        throw new Error('请提供电影 ID 或使用 --file');
       }
       const delaySeconds = parseDelaySeconds(opts.delay);
       const items = opts.file ? parseIdFile(String(opts.file)) : [{ id: parseNumericId(id || '') }];

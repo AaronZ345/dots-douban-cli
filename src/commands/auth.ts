@@ -1,5 +1,11 @@
 import { Command } from 'commander';
-import { clearAuthCache, ensureAuth, getCachedAuthSession, loginWithBrowser, type AuthSession } from '../auth.js';
+import {
+  clearAuthCache,
+  ensureAuth,
+  loginWithBrowser,
+  type AuthSession,
+  type BrowserName
+} from '../auth.js';
 import { getCurrentUserProfile } from '../api/index.js';
 import { withErrorHandler } from '../utils/error.js';
 import { withSpinner } from '../utils/spinner.js';
@@ -16,22 +22,40 @@ function toSafeSessionJson(session: AuthSession): Record<string, string | undefi
     ck: maskToken(session.ck),
     cookies: undefined,
     source: session.source,
+    accountId: session.accountId,
+    accountName: session.accountName,
     updatedAt: session.updatedAt
   };
+}
+
+function parseBrowserName(value: string | undefined): BrowserName | undefined {
+  if (!value) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'chrome' || normalized === 'edge' || normalized === 'firefox' || normalized === 'safari') {
+    return normalized;
+  }
+  throw new Error('--browser 仅支持 chrome、edge、firefox 或 safari');
 }
 
 export function registerAuthCommands(program: Command): void {
   program
     .command('login')
     .description('打开浏览器登录豆瓣并保存 Cookie')
+    .option('--browser <browser>', '明确从指定浏览器读取登录态')
+    .option('--profile <profile>', '指定浏览器配置目录（需配合 --browser）')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler({
       command: 'login',
       suggestion: '可尝试：douban login'
     }, async (opts) => {
+      const browser = parseBrowserName(opts.browser);
+      const profile = typeof opts.profile === 'string' ? opts.profile.trim() : undefined;
+      if (profile && !browser) throw new Error('--profile 必须与 --browser 一起使用');
+      if (profile && browser === 'safari') throw new Error('Safari 不支持 --profile');
+
       const session = await withSpinner(
         '正在打开浏览器登录豆瓣...',
-        () => loginWithBrowser(),
+        () => loginWithBrowser({ browser, profile }),
         !opts.json
       );
 
@@ -42,6 +66,7 @@ export function registerAuthCommands(program: Command): void {
 
       console.log('\n✅ 登录成功，已保存登录态');
       console.log(`来源: ${session.source}`);
+      if (session.accountId) console.log(`账号: ${session.accountName || session.accountId} (${session.accountId})`);
       console.log(`更新时间: ${session.updatedAt}`);
     }));
 
@@ -74,22 +99,12 @@ export function registerAuthCommands(program: Command): void {
 
   program
     .command('logout')
-    .description('清除本地保存的登录态 [需登录]')
+    .description('清除本地保存的登录态')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler({
       command: 'logout',
       suggestion: '可尝试：douban logout'
     }, async (opts) => {
-      const cached = getCachedAuthSession();
-      if (!cached) {
-        if (opts.json) {
-          console.log(JSON.stringify({ ok: true, message: '本地没有登录态缓存' }, null, 2));
-        } else {
-          console.log('本地没有登录态缓存。');
-        }
-        return;
-      }
-
       await withSpinner('正在清理本地登录态...', async () => {
         clearAuthCache();
       }, !opts.json);

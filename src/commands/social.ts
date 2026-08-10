@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
 import { ensureAuth } from '../auth.js';
 import {
@@ -9,6 +9,7 @@ import {
   getFeed,
   unfollowUser
 } from '../api/index.js';
+import { secureAtomicWriteFile } from '../storage/secure-file.js';
 import { withErrorHandler } from '../utils/error.js';
 import { isNumericId, parsePositiveInt } from '../utils/parsing.js';
 import { withSpinner } from '../utils/spinner.js';
@@ -71,7 +72,14 @@ function calcStats(records: Array<{ date?: string; rating?: number }>, year: num
   };
 }
 
-function toCsv(records: Array<{
+function protectSpreadsheetCell(value: string): string {
+  let candidate = value;
+  while (candidate.startsWith('\uFEFF')) candidate = candidate.slice(1);
+  candidate = candidate.trimStart();
+  return ['=', '+', '-', '@'].includes(candidate.charAt(0)) ? `'${value}` : value;
+}
+
+export function serializeExportCsv(records: Array<{
   id: string;
   title: string;
   status: string;
@@ -94,7 +102,7 @@ function toCsv(records: Array<{
 
     return cells
       .map((cell) => {
-        const safe = String(cell).replace(/"/g, '""');
+        const safe = protectSpreadsheetCell(String(cell)).replace(/"/g, '""');
         return `"${safe}"`;
       })
       .join(',');
@@ -111,7 +119,7 @@ function parseExportFormat(value: string | undefined): ExportFormat {
 
 export function registerSocialCommands(program: Command): void {
   program
-    .command('review [movieId] [title] [content]')
+    .command('review <movieId> <title> [content]')
     .description('写长评 [需登录]')
     .option('--file <path>', '从文件读取长评内容')
     .option('--json', '以 JSON 输出')
@@ -120,14 +128,6 @@ export function registerSocialCommands(program: Command): void {
       target: `电影ID: ${String(args[0] || '未指定')}`,
       suggestion: '可尝试：douban review 1292052 "标题" "正文"'
     }), async (movieId, title, content, opts) => {
-      if (!movieId || !title) {
-        console.log('\n📝 写长评 - 请指定电影 ID 和标题\n');
-        console.log('用法: douban review <电影ID> <标题> [正文]\n');
-        console.log('选项:');
-        console.log('  --file <path>  从文件读取长评内容\n');
-        console.log('示例: douban review 1292052 "神作" "这部电影改变了我..."');
-        return;
-      }
       const body = readReviewContent(content, opts.file);
       if (!body) throw new Error('长评内容不能为空，请传 [content] 或 --file');
 
@@ -227,7 +227,7 @@ export function registerSocialCommands(program: Command): void {
   program
     .command('export')
     .description('导出我的观影记录 [需登录]')
-    .option('-o, --output <path>', '输出文件路径', 'douban-export.json')
+    .requiredOption('-o, --output <path>', '输出文件路径（包含个人数据，必须明确指定）')
     .option('-f, --format <format>', '导出格式：json/csv', 'json')
     .option('-n, --limit <n>', '导出数量上限', '1000')
     .option('--delay <seconds>', '批量请求间隔（秒）', '1')
@@ -276,16 +276,16 @@ export function registerSocialCommands(program: Command): void {
       const merged = [...collect, ...wish, ...doing];
 
       if (format === 'json') {
-        writeFileSync(outputPath, `${JSON.stringify({ user: me, records: merged }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+        secureAtomicWriteFile(outputPath, `${JSON.stringify({ user: me, records: merged }, null, 2)}\n`);
       } else {
-        writeFileSync(outputPath, toCsv(merged), { encoding: 'utf8', mode: 0o600 });
+        secureAtomicWriteFile(outputPath, serializeExportCsv(merged));
       }
 
       console.log(`✅ 已导出 ${merged.length} 条记录到 ${outputPath}`);
     }));
 
   program
-    .command('follow [userId]')
+    .command('follow <userId>')
     .description('关注用户 [需登录]')
     .option('--delay <seconds>', '请求前延迟（秒）', '0')
     .option('--json', '以 JSON 输出')
@@ -294,13 +294,6 @@ export function registerSocialCommands(program: Command): void {
       target: `用户ID: ${String(args[0] || '未指定')}`,
       suggestion: '可尝试：douban follow USER_ID'
     }), async (userId, opts) => {
-      if (!userId) {
-        console.log('\n👥 关注用户 - 请指定用户 ID\n');
-        console.log('用法: douban follow <用户ID>\n');
-        console.log('获取 ID: 打开用户主页 URL，/people/xxx/ 中的 xxx 就是 ID\n');
-        console.log('示例: douban follow USER_ID');
-        return;
-      }
       const id = String(userId).trim();
       if (!id) throw new Error('用户 ID 不能为空');
       const delaySeconds = parseDelaySeconds(opts.delay, 0);
@@ -320,7 +313,7 @@ export function registerSocialCommands(program: Command): void {
     }));
 
   program
-    .command('unfollow [userId]')
+    .command('unfollow <userId>')
     .description('取消关注用户 [需登录]')
     .option('--delay <seconds>', '请求前延迟（秒）', '0')
     .option('--json', '以 JSON 输出')
@@ -329,12 +322,6 @@ export function registerSocialCommands(program: Command): void {
       target: `用户ID: ${String(args[0] || '未指定')}`,
       suggestion: '可尝试：douban unfollow USER_ID'
     }), async (userId, opts) => {
-      if (!userId) {
-        console.log('\n👥 取消关注 - 请指定用户 ID\n');
-        console.log('用法: douban unfollow <用户ID>\n');
-        console.log('示例: douban unfollow USER_ID');
-        return;
-      }
       const id = String(userId).trim();
       if (!id) throw new Error('用户 ID 不能为空');
       const delaySeconds = parseDelaySeconds(opts.delay, 0);

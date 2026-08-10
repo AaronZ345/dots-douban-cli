@@ -1,4 +1,5 @@
-import { BASE, FETCH_TIMEOUT_MS, UA, cleanText, fetchHtml } from './common.js';
+import { BASE, BOOK_BASE, FETCH_TIMEOUT_MS, UA, cleanText, fetchHtml } from './common.js';
+import { getUserCollectionPage } from './collection.js';
 import { debug } from '../utils/debug.js';
 import { formEncode } from '../utils/parsing.js';
 
@@ -12,6 +13,21 @@ interface DoubanJsonResponse {
   success?: boolean;
   error?: string;
   [key: string]: unknown;
+}
+
+type JsonObject = Record<string, unknown>;
+
+interface MutationEndpoint<T> {
+  url: string;
+  referer: string;
+  decode: (payload: JsonObject) => T;
+}
+
+class MutationHttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'MutationHttpError';
+  }
 }
 
 interface ProfileMatch {
@@ -49,8 +65,28 @@ export interface ReviewCreateResult {
   url: string;
 }
 
+export type SubjectActionKind = 'movie' | 'book';
+export type SubjectInterest = 'collect' | 'wish' | 'do' | 'none';
+
+export interface SubjectActionDescriptor {
+  kind: SubjectActionKind;
+  baseUrl: string;
+}
+
+export interface SubjectInterestPatch {
+  interest: SubjectInterest;
+  rating?: number;
+  comment?: string;
+}
+
+export const SUBJECT_ACTIONS: Record<SubjectActionKind, SubjectActionDescriptor> = {
+  movie: { kind: 'movie', baseUrl: BASE },
+  book: { kind: 'book', baseUrl: BOOK_BASE }
+};
+
 interface ResolveCkOptions {
   forceRefresh?: boolean;
+  subjectBaseUrl?: string;
 }
 
 interface CkCacheEntry {
@@ -59,6 +95,11 @@ interface CkCacheEntry {
 }
 
 const CK_CACHE_TTL_MS = 30 * 60 * 1000;
+const ALLOWED_MUTATION_HOSTS = new Set([
+  'www.douban.com',
+  'movie.douban.com',
+  'book.douban.com'
+]);
 const ckCache = new Map<string, CkCacheEntry>();
 const CK_ERROR_PATTERNS: RegExp[] = [
   /\bck\b/i,
@@ -87,74 +128,106 @@ function parseApiError(res: Response, text: string): string {
   if (parsed && typeof parsed.msg === 'string' && parsed.msg.trim()) {
     return parsed.msg.trim();
   }
+  if (parsed && typeof parsed.error === 'string' && parsed.error.trim()) {
+    return parsed.error.trim();
+  }
   return `HTTP ${res.status}: ${text.slice(0, 120)}`;
 }
 
-function parseJsonApiResult(text: string): DoubanJsonResponse {
+function parseJsonObject(text: string): JsonObject {
   const trimmed = text.trim();
   if (!trimmed) {
     throw new Error('豆瓣接口返回空响应');
   }
 
-  const parsed = parseJsonResponse(text);
-  if (!parsed || typeof parsed !== 'object') {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
     throw new Error(`豆瓣接口返回非 JSON 对象: ${trimmed.slice(0, 120)}`);
   }
 
-  if (typeof parsed.r === 'number') {
-    if (parsed.r !== 0) {
-      throw new Error(parsed.msg || `豆瓣接口错误 code=${String(parsed.code || 'unknown')}`);
-    }
-    return parsed;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`豆瓣接口返回非 JSON 对象: ${trimmed.slice(0, 120)}`);
   }
-
-  const hasNegativeSignals =
-    parsed.ok === false
-    || parsed.success === false
-    || (typeof parsed.status === 'string' && ['fail', 'failed', 'error'].includes(parsed.status.trim().toLowerCase()));
-
-  if (typeof parsed.status === 'string') {
-    const normalized = parsed.status.trim().toLowerCase();
-    if (normalized === 'ok' || normalized === 'success') {
-      return parsed;
-    }
-    if (normalized === 'fail' || normalized === 'failed' || normalized === 'error') {
-      throw new Error(parsed.msg || parsed.error || `豆瓣接口错误 status=${parsed.status}`);
-    }
-  }
-
-  if (typeof parsed.ok === 'boolean' && parsed.ok) {
-    return parsed;
-  }
-
-  if (typeof parsed.success === 'boolean' && parsed.success) {
-    return parsed;
-  }
-
-  if (hasNegativeSignals) {
-    throw new Error(parsed.msg || parsed.error || '豆瓣接口返回失败状态');
-  }
-
-  if (typeof parsed.msg === 'string' && parsed.msg.trim()) {
-    throw new Error(parsed.msg.trim());
-  }
-
-  if (typeof parsed.error === 'string' && parsed.error.trim()) {
-    throw new Error(parsed.error.trim());
-  }
-
-  // 某些豆瓣接口成功时仅返回对象片段，不包含显式成功字段，且无失败信号。
-  return parsed;
+  return parsed as JsonObject;
 }
 
-async function postForm(url: string, data: Record<string, string>, cookies: string, referer: string): Promise<DoubanJsonResponse> {
+function responseMessage(payload: JsonObject, fallback: string): string {
+  if (typeof payload.msg === 'string' && payload.msg.trim()) return payload.msg.trim();
+  if (typeof payload.error === 'string' && payload.error.trim()) return payload.error.trim();
+  return fallback;
+}
+
+function assertNoMutationFailure(payload: JsonObject): void {
+  if ('r' in payload && (typeof payload.r !== 'number' || payload.r !== 0)) {
+    throw new Error(responseMessage(payload, `豆瓣接口错误 code=${String(payload.code || 'unknown')}`));
+  }
+  if (typeof payload.error === 'string' && payload.error.trim()) {
+    throw new Error(payload.error.trim());
+  }
+  if (payload.error) {
+    throw new Error(responseMessage(payload, '豆瓣接口返回错误状态'));
+  }
+  if (payload.ok === false || payload.success === false) {
+    throw new Error(responseMessage(payload, '豆瓣接口返回失败状态'));
+  }
+  if (typeof payload.status === 'string') {
+    const status = payload.status.trim().toLowerCase();
+    if (status === 'fail' || status === 'failed' || status === 'error') {
+      throw new Error(responseMessage(payload, `豆瓣接口错误 status=${payload.status}`));
+    }
+  }
+}
+
+export function decodeExplicitMutation(payload: JsonObject): JsonObject {
+  assertNoMutationFailure(payload);
+
+  if (payload.r === 0 || payload.ok === true || payload.success === true) {
+    return payload;
+  }
+  if (typeof payload.status === 'string') {
+    const status = payload.status.trim().toLowerCase();
+    if (status === 'ok' || status === 'success') return payload;
+  }
+
+  throw new Error('豆瓣接口缺少明确的成功状态');
+}
+
+function decodeRZeroMutation(payload: JsonObject): JsonObject {
+  assertNoMutationFailure(payload);
+  if (payload.r !== 0) {
+    throw new Error('豆瓣接口缺少明确的 r=0 成功状态');
+  }
+  return payload;
+}
+
+function validateMutationUrl(rawUrl: string): URL {
+  const url = new URL(rawUrl);
+  if (url.protocol !== 'https:' || !ALLOWED_MUTATION_HOSTS.has(url.hostname) || (url.port && url.port !== '443')) {
+    throw new Error(`拒绝向非受信任地址发送登录态: ${url.origin}`);
+  }
+  return url;
+}
+
+async function postForm<T>(
+  endpoint: MutationEndpoint<T>,
+  data: Record<string, string | undefined>,
+  cookies: string
+): Promise<T> {
+  const url = validateMutationUrl(endpoint.url);
+  const referer = validateMutationUrl(endpoint.referer);
+  if (url.origin !== referer.origin) {
+    throw new Error(`请求来源与目标域不一致: ${referer.origin} -> ${url.origin}`);
+  }
+
   const res = await fetch(url, {
     method: 'POST',
     headers: {
       'User-Agent': UA,
       Cookie: cookies,
-      Referer: referer,
-      Origin: 'https://www.douban.com',
+      Referer: referer.toString(),
+      Origin: url.origin,
       'X-Requested-With': 'XMLHttpRequest',
       'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
     },
@@ -164,9 +237,13 @@ async function postForm(url: string, data: Record<string, string>, cookies: stri
 
   const text = await res.text();
   if (!res.ok) {
-    throw new Error(parseApiError(res, text));
+    throw new MutationHttpError(parseApiError(res, text), res.status);
   }
-  return parseJsonApiResult(text);
+  return endpoint.decode(parseJsonObject(text));
+}
+
+function isUnsupportedEndpointError(error: unknown): boolean {
+  return error instanceof MutationHttpError && [404, 405, 410, 501].includes(error.status);
 }
 
 function extractCookieValue(cookieHeader: string, name: string): string | undefined {
@@ -218,9 +295,10 @@ async function withCkRetry<T>(
   cookies: string,
   existingCk: string | undefined,
   subjectId: string | undefined,
-  action: (ck: string) => Promise<T>
+  action: (ck: string) => Promise<T>,
+  subjectBaseUrl = BASE
 ): Promise<T> {
-  const ck = await resolveCk(cookies, existingCk, subjectId);
+  const ck = await resolveCk(cookies, existingCk, subjectId, { subjectBaseUrl });
 
   try {
     return await action(ck);
@@ -228,7 +306,10 @@ async function withCkRetry<T>(
     if (!isCkRelatedError(error)) throw error;
 
     clearCachedCk(cookies);
-    const refreshedCk = await resolveCk(cookies, undefined, subjectId, { forceRefresh: true });
+    const refreshedCk = await resolveCk(cookies, undefined, subjectId, {
+      forceRefresh: true,
+      subjectBaseUrl
+    });
     return action(refreshedCk);
   }
 }
@@ -272,8 +353,10 @@ export async function resolveCk(
   }
 
   if (subjectId) {
-    const subjectHtml = await fetchHtml(`${BASE}/subject/${subjectId}/`, {
-      Referer: BASE,
+    const subjectBaseUrl = options.subjectBaseUrl || BASE;
+    validateMutationUrl(subjectBaseUrl);
+    const subjectHtml = await fetchHtml(`${subjectBaseUrl}/subject/${subjectId}/`, {
+      Referer: subjectBaseUrl,
       Cookie: cookies
     });
     const ck = extractCkFromHtml(subjectHtml);
@@ -318,33 +401,97 @@ function parseProfileFromHtml(html: string): CurrentUserProfile {
 }
 
 export async function getCurrentUserProfile(cookies: string): Promise<CurrentUserProfile> {
-  // 先尝试 /mine/ 页面，更可靠
   const mineHtml = await fetchHtml('https://www.douban.com/mine/', {
     Referer: 'https://www.douban.com/',
     Cookie: cookies
   });
 
-  // 从 /mine/ 页面提取用户 ID
-  const titleMatch = mineHtml.match(/<title>\s*([^<\n]+?)\s*<\/title>/);
-  const peopleMatch = mineHtml.match(/href=["']https:\/\/www\.douban\.com\/people\/([^/"']+)\//);
-
-  if (peopleMatch?.[1]) {
-    const id = peopleMatch[1];
-    const name = titleMatch?.[1]?.trim() || id;
-    return {
-      id,
-      name,
-      url: `https://www.douban.com/people/${id}/`
-    };
+  try {
+    return parseProfileFromHtml(mineHtml);
+  } catch (error) {
+    debug('authenticated', `/mine/ 页面未提供可靠的当前账号标记: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  // 回退到首页 lnk-mine
   const html = await fetchHtml('https://www.douban.com/', {
     Referer: 'https://www.douban.com/',
     Cookie: cookies
   });
 
   return parseProfileFromHtml(html);
+}
+
+function validateSubjectId(subjectId: string): string {
+  const id = subjectId.trim();
+  if (!/^\d+$/.test(id)) throw new Error('条目 ID 必须是纯数字');
+  return id;
+}
+
+function subjectEndpoint<T>(
+  descriptor: SubjectActionDescriptor,
+  subjectId: string,
+  path: string,
+  decode: (payload: JsonObject) => T
+): MutationEndpoint<T> {
+  const baseUrl = validateMutationUrl(descriptor.baseUrl).origin;
+  return {
+    url: `${baseUrl}${path}`,
+    referer: `${baseUrl}/subject/${subjectId}/`,
+    decode
+  };
+}
+
+export async function updateSubjectInterest(
+  descriptor: SubjectActionDescriptor,
+  subjectId: string,
+  patch: SubjectInterestPatch,
+  cookies: string,
+  existingCk?: string
+): Promise<void> {
+  const id = validateSubjectId(subjectId);
+  if (patch.rating !== undefined && (!Number.isInteger(patch.rating) || patch.rating < 1 || patch.rating > 5)) {
+    throw new Error('评分必须是 1-5 的整数');
+  }
+
+  await withCkRetry(cookies, existingCk, id, async (ck) => {
+    await postForm(
+      subjectEndpoint(descriptor, id, `/j/subject/${id}/interest`, decodeRZeroMutation),
+      {
+        ck,
+        interest: patch.interest,
+        rating: patch.rating === undefined ? undefined : String(patch.rating),
+        comment: patch.comment
+      },
+      cookies
+    );
+  }, descriptor.baseUrl);
+}
+
+export async function removeSubjectInterest(
+  descriptor: SubjectActionDescriptor,
+  subjectId: string,
+  cookies: string,
+  existingCk?: string
+): Promise<void> {
+  const id = validateSubjectId(subjectId);
+
+  await withCkRetry(cookies, existingCk, id, async (ck) => {
+    try {
+      await postForm(
+        subjectEndpoint(descriptor, id, `/j/subject/${id}/removeinterest`, decodeExplicitMutation),
+        { ck },
+        cookies
+      );
+    } catch (error) {
+      if (isCkRelatedError(error)) throw error;
+      if (!isUnsupportedEndpointError(error)) throw error;
+      debug('authenticated', 'removeinterest endpoint unsupported; using interest=none fallback');
+      await postForm(
+        subjectEndpoint(descriptor, id, `/j/subject/${id}/interest`, decodeRZeroMutation),
+        { ck, interest: 'none' },
+        cookies
+      );
+    }
+  }, descriptor.baseUrl);
 }
 
 export async function createReview(
@@ -361,49 +508,33 @@ export async function createReview(
 
   return withCkRetry(cookies, existingCk, id, async (ck) => {
     const result = await postForm(
-      `${BASE}/j/review/create`,
+      {
+        url: `${BASE}/j/review/create`,
+        referer: `${BASE}/subject/${id}/`,
+        decode: decodeExplicitMutation
+      },
       {
         ck,
         subject_id: id,
         title: title.trim(),
         review: content.trim()
       },
-      cookies,
-      `${BASE}/subject/${id}/`
+      cookies
     );
 
     const reviewId = String(result.id || '').trim();
+    if (!/^\d+$/.test(reviewId)) {
+      throw new Error('豆瓣接口未返回有效的长评 ID，无法确认发布成功');
+    }
     return {
       id: reviewId,
-      url: reviewId ? `${BASE}/review/${reviewId}/` : `${BASE}/subject/${id}/`
+      url: `${BASE}/review/${reviewId}/`
     };
   });
 }
 
 export async function unmarkSubject(movieId: string, cookies: string, existingCk?: string): Promise<void> {
-  const id = movieId.trim();
-  if (!/^\d+$/.test(id)) throw new Error('电影 ID 必须是纯数字');
-
-  await withCkRetry(cookies, existingCk, id, async (ck) => {
-    try {
-      await postForm(
-        `${BASE}/j/subject/${id}/removeinterest`,
-        { ck },
-        cookies,
-        `${BASE}/subject/${id}/`
-      );
-      return;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      debug('authenticated', `removeinterest 失败，回退 interest=none: ${message}`);
-      await postForm(
-        `${BASE}/j/subject/${id}/interest`,
-        { ck, interest: 'none' },
-        cookies,
-        `${BASE}/subject/${id}/`
-      );
-    }
-  });
+  await removeSubjectInterest(SUBJECT_ACTIONS.movie, movieId, cookies, existingCk);
 }
 
 export async function followUser(userId: string, cookies: string, existingCk?: string): Promise<void> {
@@ -413,20 +544,27 @@ export async function followUser(userId: string, cookies: string, existingCk?: s
   await withCkRetry(cookies, existingCk, undefined, async (ck) => {
     try {
       await postForm(
-        `https://www.douban.com/j/contact/follow/${encodeURIComponent(id)}`,
+        {
+          url: `https://www.douban.com/j/contact/follow/${encodeURIComponent(id)}`,
+          referer: 'https://www.douban.com/',
+          decode: decodeExplicitMutation
+        },
         { ck },
-        cookies,
-        'https://www.douban.com/'
+        cookies
       );
       return;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      debug('authenticated', `follow 接口失败，回退 add: ${message}`);
+      if (isCkRelatedError(error)) throw error;
+      if (!isUnsupportedEndpointError(error)) throw error;
+      debug('authenticated', 'follow endpoint unsupported; using add fallback');
       await postForm(
-        'https://www.douban.com/j/contact/add',
+        {
+          url: 'https://www.douban.com/j/contact/add',
+          referer: 'https://www.douban.com/',
+          decode: decodeExplicitMutation
+        },
         { ck, people_id: id },
-        cookies,
-        'https://www.douban.com/'
+        cookies
       );
     }
   });
@@ -439,20 +577,27 @@ export async function unfollowUser(userId: string, cookies: string, existingCk?:
   await withCkRetry(cookies, existingCk, undefined, async (ck) => {
     try {
       await postForm(
-        `https://www.douban.com/j/contact/unfollow/${encodeURIComponent(id)}`,
+        {
+          url: `https://www.douban.com/j/contact/unfollow/${encodeURIComponent(id)}`,
+          referer: 'https://www.douban.com/',
+          decode: decodeExplicitMutation
+        },
         { ck },
-        cookies,
-        'https://www.douban.com/'
+        cookies
       );
       return;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      debug('authenticated', `unfollow 接口失败，回退 remove: ${message}`);
+      if (isCkRelatedError(error)) throw error;
+      if (!isUnsupportedEndpointError(error)) throw error;
+      debug('authenticated', 'unfollow endpoint unsupported; using remove fallback');
       await postForm(
-        'https://www.douban.com/j/contact/remove',
+        {
+          url: 'https://www.douban.com/j/contact/remove',
+          referer: 'https://www.douban.com/',
+          decode: decodeExplicitMutation
+        },
         { ck, people_id: id },
-        cookies,
-        'https://www.douban.com/'
+        cookies
       );
     }
   });
@@ -494,64 +639,6 @@ export async function getFeed(cookies: string, limit = 20): Promise<FeedItem[]> 
   return results;
 }
 
-function normalizeRatingClass(block: string): number | undefined {
-  const match = block.match(/rating(\d)-t/);
-  if (!match) return undefined;
-  const score = Number(match[1]);
-  return Number.isFinite(score) ? score : undefined;
-}
-
-function parseCollectionBlocks(html: string, status: InterestStatus): CollectionRecord[] {
-  const items: CollectionRecord[] = [];
-  const itemRegex = /<li[^>]*class="item"[^>]*>[\s\S]*?<\/li>/g;
-
-  let match;
-  while ((match = itemRegex.exec(html)) !== null) {
-    const block = match[0];
-    const subjectMatch = block.match(/href="https:\/\/movie\.douban\.com\/subject\/(\d+)\/"[^>]*>([\s\S]*?)<\/a>/i);
-    if (!subjectMatch?.[1]) continue;
-
-    const dateMatch = block.match(/<div class="date">([\s\S]*?)<\/div>/i);
-    const commentMatch = block.match(/<span class="comment">([\s\S]*?)<\/span>/i);
-
-    // 从 date div 中提取日期（格式：2026-03-18）
-    const dateText = dateMatch?.[1] || '';
-    const dateOnly = dateText.match(/(\d{4}-\d{2}-\d{2})/)?.[1] || '';
-
-    items.push({
-      id: subjectMatch[1],
-      title: cleanText(subjectMatch[2]),
-      url: `https://movie.douban.com/subject/${subjectMatch[1]}/`,
-      status,
-      date: dateOnly,
-      rating: normalizeRatingClass(block),
-      comment: cleanText(commentMatch?.[1] || '') || undefined
-    });
-  }
-
-  return items;
-}
-
-function parseCollectionNextStart(html: string): number | null {
-  const nextMatch = html.match(/<span[^>]*class=["'][^"']*next[^"']*["'][^>]*>[\s\S]*?<a[^>]*href=["']([^"']+)["']/i);
-  if (!nextMatch?.[1]) return null;
-
-  const href = nextMatch[1].replace(/&amp;/g, '&').trim();
-  let url: URL;
-
-  try {
-    url = new URL(href, BASE);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    debug('authenticated', `解析下一页 start 失败: ${message}`);
-    return null;
-  }
-
-  const nextStart = Number(url.searchParams.get('start'));
-  if (!Number.isInteger(nextStart) || nextStart < 0) return null;
-  return nextStart;
-}
-
 export async function getCollectionRecords(
   userId: string,
   status: InterestStatus,
@@ -560,37 +647,27 @@ export async function getCollectionRecords(
 ): Promise<CollectionRecord[]> {
   const id = userId.trim();
   if (!id) throw new Error('用户 ID 不能为空');
-  if (!Number.isFinite(limit) || limit <= 0) return [];
+  if (!Number.isInteger(limit) || limit <= 0) return [];
 
-  const results: CollectionRecord[] = [];
-  const seenIds = new Set<string>();
-  const visitedStarts = new Set<number>();
-  const encodedId = encodeURIComponent(id);
-  let start = 0;
-
-  while (results.length < limit) {
-    if (visitedStarts.has(start)) break;
-    visitedStarts.add(start);
-
-    const html = await fetchHtml(`${BASE}/people/${encodedId}/${status}/?start=${start}&sort=time&rating=all&filter=all&mode=list`, {
-      Referer: `${BASE}/people/${encodedId}/${status}/`,
-      ...(cookies ? { Cookie: cookies } : {})
-    });
-
-    const pageItems = parseCollectionBlocks(html, status);
-    if (pageItems.length === 0) break;
-
-    for (const item of pageItems) {
-      if (seenIds.has(item.id)) continue;
-      seenIds.add(item.id);
-      results.push(item);
-      if (results.length >= limit) break;
-    }
-
-    const nextStart = parseCollectionNextStart(html);
-    if (nextStart === null || nextStart <= start) break;
-    start = nextStart;
+  const page = await getUserCollectionPage({
+    kind: 'movie',
+    userId: id,
+    status,
+    start: 0,
+    count: limit,
+    cookies
+  });
+  if (page.partial) {
+    debug('authenticated', `用户收藏仅返回部分结果: ${page.warnings.join('; ')}`);
   }
 
-  return results;
+  return page.items.map((item) => ({
+    id: item.id,
+    title: item.title,
+    url: item.url,
+    status,
+    date: item.date || undefined,
+    rating: item.rating > 0 ? item.rating : undefined,
+    comment: item.comment || undefined
+  }));
 }

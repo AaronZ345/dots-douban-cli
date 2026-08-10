@@ -1,16 +1,20 @@
 import { createCipheriv, createDecipheriv, createHash, pbkdf2Sync, randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, readFileSync, unlinkSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
+import { getCurrentUserProfile } from './api/authenticated.js';
+import { secureAtomicWriteFile } from './storage/secure-file.js';
 
 export interface AuthSession {
   dbcl2: string;
   ck?: string;
   cookies: string;
   source: string;
+  accountId?: string;
+  accountName?: string;
   updatedAt: string;
 }
 
@@ -27,7 +31,12 @@ interface EncryptedAuthCache {
 const AUTH_CACHE_PATH = path.join(os.homedir(), '.douban-cli-auth.json');
 const DOUBAN_LOGIN_URL = 'https://accounts.douban.com/passport/login';
 
-type PuppeteerCookie = { name?: string; value?: string };
+export type BrowserName = 'chrome' | 'edge' | 'firefox' | 'safari';
+
+export interface LoginOptions {
+  browser?: BrowserName;
+  profile?: string;
+}
 
 function asObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
@@ -68,6 +77,8 @@ function parseAuthSession(raw: unknown): AuthSession | null {
 
   const ck = typeof obj.ck === 'string' && obj.ck.trim() ? obj.ck.trim() : undefined;
   const source = typeof obj.source === 'string' && obj.source.trim() ? obj.source.trim() : 'Browser';
+  const accountId = typeof obj.accountId === 'string' && obj.accountId.trim() ? obj.accountId.trim() : undefined;
+  const accountName = typeof obj.accountName === 'string' && obj.accountName.trim() ? obj.accountName.trim() : undefined;
   const updatedAt = typeof obj.updatedAt === 'string' && obj.updatedAt.trim() ? obj.updatedAt.trim() : new Date().toISOString();
   const cookies = buildCookieHeader(dbcl2, ck);
 
@@ -76,6 +87,8 @@ function parseAuthSession(raw: unknown): AuthSession | null {
     ck,
     cookies,
     source,
+    accountId,
+    accountName,
     updatedAt
   };
 }
@@ -125,31 +138,55 @@ function decryptCache(payload: EncryptedAuthCache): AuthSession | null {
 }
 
 function readAuthCache(): AuthSession | null {
-  if (!existsSync(AUTH_CACHE_PATH)) return null;
-
   try {
-    const stat = statSync(AUTH_CACHE_PATH);
+    const stat = lstatSync(AUTH_CACHE_PATH);
+    if (stat.isSymbolicLink()) {
+      clearAuthCache();
+      return null;
+    }
+    if (!stat.isFile()) {
+      throw new Error('登录缓存不是普通文件');
+    }
+    if ((stat.mode & 0o077) !== 0) chmodSync(AUTH_CACHE_PATH, 0o600);
     const ageMs = Date.now() - stat.mtimeMs;
-    if (ageMs > 30 * 24 * 60 * 60 * 1000) return null;
+    if (ageMs > 30 * 24 * 60 * 60 * 1000) {
+      clearAuthCache();
+      return null;
+    }
 
     const raw = JSON.parse(readFileSync(AUTH_CACHE_PATH, 'utf8')) as unknown;
     const parsed = parseEncryptedAuthCache(raw);
-    if (!parsed) return null;
-    return decryptCache(parsed);
+    if (!parsed) {
+      clearAuthCache();
+      return null;
+    }
+
+    const session = decryptCache(parsed);
+    if (!session) clearAuthCache();
+    return session;
   } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     reportRecoverableError('读取登录缓存失败', error);
+    try {
+      clearAuthCache();
+    } catch (clearError) {
+      reportRecoverableError('清理无效登录缓存失败', clearError);
+    }
     return null;
   }
 }
 
 function saveAuthCache(auth: AuthSession): void {
   const encrypted = encryptCache(auth);
-  writeFileSync(AUTH_CACHE_PATH, `${JSON.stringify(encrypted, null, 2)}\n`, { mode: 0o600 });
+  secureAtomicWriteFile(AUTH_CACHE_PATH, `${JSON.stringify(encrypted, null, 2)}\n`);
 }
 
 export function clearAuthCache(): void {
-  if (!existsSync(AUTH_CACHE_PATH)) return;
-  unlinkSync(AUTH_CACHE_PATH);
+  try {
+    unlinkSync(AUTH_CACHE_PATH);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
 }
 
 export function getCachedAuthSession(clear = false): AuthSession | null {
@@ -175,35 +212,32 @@ function createSession(dbcl2: string, ck: string | undefined, source: string): A
 }
 
 interface SweetCookieResult {
-  cookies: Array<{ name: string; value: string; source?: { browser?: string } }>;
+  cookies: Array<{
+    name: string;
+    value: string;
+    source?: { browser?: BrowserName; profile?: string };
+  }>;
   warnings: string[];
 }
 
+interface SweetCookieOptions {
+  url: string;
+  names: string[];
+  browsers: BrowserName[];
+  mode: 'first';
+  chromeProfile?: string;
+  edgeProfile?: string;
+  firefoxProfile?: string;
+}
+
+export type BrowserCookieReader = (options: SweetCookieOptions) => Promise<SweetCookieResult>;
+
 interface BrowserCookieBucket {
   source: string;
+  profile?: string;
   dbcl2?: string;
   ck?: string;
 }
-
-interface PuppeteerPage {
-  goto(url: string, options?: { waitUntil?: string }): Promise<unknown>;
-  waitForFunction(pageFunction: string | (() => unknown), options?: { timeout?: number }): Promise<unknown>;
-  cookies(): Promise<PuppeteerCookie[]>;
-}
-
-interface PuppeteerBrowser {
-  newPage(): Promise<PuppeteerPage>;
-  close(): Promise<void>;
-}
-
-interface PuppeteerLaunchOptions {
-  headless?: boolean;
-  defaultViewport?: null | { width: number; height: number };
-}
-
-type PuppeteerLaunch = (options?: PuppeteerLaunchOptions) => Promise<PuppeteerBrowser>;
-
-type BrowserName = 'chrome' | 'edge' | 'firefox' | 'safari';
 
 function reportRecoverableError(context: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
@@ -224,55 +258,104 @@ function normalizeBrowserSource(source: string): string {
   return mapping[lower] || source.charAt(0).toUpperCase() + source.slice(1);
 }
 
-async function extractFromBrowsers(): Promise<AuthSession | null> {
-  // 使用 sweet-cookie 库提取浏览器 cookie（支持 Chrome/Edge/Firefox/Safari）
-  let getCookies: (options: { url: string; browsers?: BrowserName[] }) => Promise<SweetCookieResult>;
-  
+function sourceLabel(browser: BrowserName, profile?: string): string {
+  const normalized = normalizeBrowserSource(browser);
+  return profile?.trim() ? `${normalized} (${profile.trim()})` : normalized;
+}
+
+function profileOptions(browser: BrowserName, profile?: string): Partial<SweetCookieOptions> {
+  const selected = profile?.trim();
+  if (!selected) return {};
+  if (browser === 'chrome') return { chromeProfile: selected };
+  if (browser === 'edge') return { edgeProfile: selected };
+  if (browser === 'firefox') return { firefoxProfile: selected };
+  return {};
+}
+
+function sessionsFromCookies(
+  result: SweetCookieResult,
+  fallbackBrowser: BrowserName,
+  fallbackProfile?: string
+): AuthSession[] {
+  const grouped = new Map<string, BrowserCookieBucket>();
+
+  for (const cookie of result.cookies) {
+    if (!cookie?.name || typeof cookie.value !== 'string') continue;
+    if (cookie.name !== 'dbcl2' && cookie.name !== 'ck') continue;
+
+    const browser = cookie.source?.browser || fallbackBrowser;
+    const profile = cookie.source?.profile?.trim() || fallbackProfile?.trim() || undefined;
+    const key = `${browser}:${profile || ''}`;
+    const bucket = grouped.get(key) || {
+      source: sourceLabel(browser, profile),
+      profile
+    };
+
+    if (cookie.name === 'dbcl2' && !bucket.dbcl2) {
+      bucket.dbcl2 = cookie.value.replace(/^"|"$/g, '').trim();
+    }
+    if (cookie.name === 'ck' && !bucket.ck) {
+      bucket.ck = cookie.value.trim();
+    }
+
+    grouped.set(key, bucket);
+  }
+
+  return [...grouped.values()]
+    .filter((bucket): bucket is BrowserCookieBucket & { dbcl2: string } => Boolean(bucket.dbcl2))
+    .map((bucket) => createSession(bucket.dbcl2, bucket.ck, bucket.source));
+}
+
+async function loadBrowserCookieReader(): Promise<BrowserCookieReader | null> {
   try {
     const mod = await import('@steipete/sweet-cookie');
-    getCookies = mod.getCookies;
+    return mod.getCookies as BrowserCookieReader;
   } catch (error) {
     reportRecoverableError('加载 sweet-cookie 失败', error);
     return null;
   }
+}
 
-  try {
-    const result = await getCookies({
-      url: 'https://www.douban.com',
-      browsers: ['chrome', 'edge', 'firefox', 'safari']
-    });
-
-    const grouped = new Map<string, BrowserCookieBucket>();
-
-    for (const cookie of result.cookies) {
-      if (!cookie?.name || typeof cookie.value !== 'string') continue;
-
-      const rawSource = cookie.source?.browser || 'browser';
-      const key = rawSource.trim().toLowerCase() || 'browser';
-      const source = normalizeBrowserSource(rawSource || 'Browser');
-      const bucket = grouped.get(key) || { source };
-
-      if (cookie.name === 'dbcl2' && !bucket.dbcl2) {
-        bucket.dbcl2 = cookie.value.replace(/^"|"$/g, '').trim();
-      }
-
-      if (cookie.name === 'ck' && !bucket.ck) {
-        bucket.ck = cookie.value.trim();
-      }
-
-      grouped.set(key, bucket);
-    }
-
-    const buckets = [...grouped.values()];
-    const selected = buckets.find((bucket) => bucket.dbcl2 && bucket.ck)
-      || buckets.find((bucket) => bucket.dbcl2);
-
-    if (!selected?.dbcl2) return null;
-    return createSession(selected.dbcl2, selected.ck, selected.source);
-  } catch (error) {
-    reportRecoverableError('从浏览器提取 Cookie 失败', error);
-    return null;
+async function extractFromBrowsers(
+  options: LoginOptions = {},
+  reader?: BrowserCookieReader
+): Promise<AuthSession[]> {
+  if (options.profile && !options.browser) {
+    throw new Error('--profile 必须与 --browser 一起使用');
   }
+  if (options.profile && options.browser === 'safari') {
+    throw new Error('Safari 不支持 --profile');
+  }
+
+  const getCookies = reader || await loadBrowserCookieReader();
+  if (!getCookies) return [];
+
+  const browsers: BrowserName[] = options.browser
+    ? [options.browser]
+    : ['chrome', 'edge', 'firefox', 'safari'];
+  const sessions: AuthSession[] = [];
+
+  for (const browser of browsers) {
+    try {
+      const result = await getCookies({
+        url: 'https://www.douban.com',
+        names: ['dbcl2', 'ck'],
+        browsers: [browser],
+        mode: 'first',
+        ...profileOptions(browser, options.profile)
+      });
+      sessions.push(...sessionsFromCookies(result, browser, options.profile));
+    } catch (error) {
+      reportRecoverableError(`从 ${normalizeBrowserSource(browser)} 提取 Cookie 失败`, error);
+    }
+  }
+
+  const deduped = new Map<string, AuthSession>();
+  for (const session of sessions) {
+    const key = `${session.source}:${session.dbcl2}`;
+    if (!deduped.has(key)) deduped.set(key, session);
+  }
+  return [...deduped.values()];
 }
 
 function openLoginPage(): void {
@@ -308,100 +391,101 @@ async function waitForEnter(): Promise<void> {
   }
 }
 
-function toSessionFromPuppeteerCookies(cookies: PuppeteerCookie[]): AuthSession | null {
-  let dbcl2 = '';
-  let ck = '';
-
-  for (const cookie of cookies) {
-    if (!cookie?.name || typeof cookie.value !== 'string') continue;
-    if (cookie.name === 'dbcl2' && !dbcl2) dbcl2 = cookie.value.replace(/^"|"$/g, '');
-    if (cookie.name === 'ck' && !ck) ck = cookie.value;
-  }
-
-  if (!dbcl2) return null;
-  return createSession(dbcl2, ck || undefined, 'Puppeteer');
+async function verifyAuthSession(session: AuthSession): Promise<AuthSession> {
+  const profile = await getCurrentUserProfile(session.cookies);
+  return {
+    ...session,
+    accountId: profile.id,
+    accountName: profile.name
+  };
 }
 
-async function extractFromPuppeteerBrowserLogin(): Promise<AuthSession | null> {
-  let puppeteerModule: unknown;
-  try {
-    const moduleName = 'puppeteer';
-    puppeteerModule = await import(moduleName);
-  } catch (error) {
-    reportRecoverableError('加载 puppeteer 失败', error);
-    return null;
-  }
+async function selectVerifiedSession(candidates: AuthSession[]): Promise<AuthSession> {
+  const verified: AuthSession[] = [];
+  const failedSources: string[] = [];
 
-  const launch = (puppeteerModule as { default?: { launch?: PuppeteerLaunch }; launch?: PuppeteerLaunch }).default?.launch
-    || (puppeteerModule as { launch?: PuppeteerLaunch }).launch;
-  if (typeof launch !== 'function') return null;
-
-  let browser: PuppeteerBrowser | null = null;
-
-  try {
-    browser = await launch({
-      headless: false,
-      defaultViewport: null
-    });
-
-    const page = await browser.newPage();
-    await page.goto(DOUBAN_LOGIN_URL, { waitUntil: 'domcontentloaded' });
-
-    await page.waitForFunction(
-      () => document.cookie.includes('dbcl2='),
-      { timeout: 180000 }
-    );
-
-    const cookies = await page.cookies();
-    return toSessionFromPuppeteerCookies(cookies as PuppeteerCookie[]);
-  } catch (error) {
-    reportRecoverableError('通过 puppeteer 登录提取 Cookie 失败', error);
-    return null;
-  } finally {
-    if (browser) {
-      try {
-        await browser.close();
-      } catch (error) {
-        reportRecoverableError('关闭 puppeteer 浏览器失败', error);
-      }
+  for (const candidate of candidates) {
+    try {
+      verified.push(await verifyAuthSession(candidate));
+    } catch (error) {
+      failedSources.push(candidate.source);
+      reportRecoverableError(`验证 ${candidate.source} 登录态失败`, error);
     }
   }
+
+  if (verified.length === 0) {
+    throw new Error('未找到可验证的豆瓣登录态，请确认登录完成后重试');
+  }
+
+  if (candidates.length > 1 && failedSources.length > 0) {
+    throw new Error(`部分浏览器登录态无法验证（${failedSources.join(', ')}），请使用 --browser 并按需配合 --profile 明确选择`);
+  }
+
+  const accounts = new Map<string, AuthSession[]>();
+  for (const session of verified) {
+    const accountId = session.accountId || '';
+    const bucket = accounts.get(accountId) || [];
+    bucket.push(session);
+    accounts.set(accountId, bucket);
+  }
+
+  if (accounts.size > 1) {
+    const choices = verified
+      .map((session) => `${session.source}: ${session.accountId}`)
+      .join(', ');
+    throw new Error(`检测到多个豆瓣账号（${choices}），请使用 --browser 并按需配合 --profile 明确选择`);
+  }
+
+  return verified[0];
 }
 
-export async function loginWithBrowser(): Promise<AuthSession> {
-  const fromPuppeteer = await extractFromPuppeteerBrowserLogin();
-  if (fromPuppeteer) {
-    saveAuthCache(fromPuppeteer);
-    return fromPuppeteer;
+export async function loginFromBrowserCookies(
+  options: LoginOptions = {},
+  reader?: BrowserCookieReader
+): Promise<AuthSession> {
+  const candidates = await extractFromBrowsers(options, reader);
+  const selected = await selectVerifiedSession(candidates);
+  saveAuthCache(selected);
+  return selected;
+}
+
+export async function loginWithBrowser(options: LoginOptions = {}): Promise<AuthSession> {
+  if (options.profile && !options.browser) {
+    throw new Error('--profile 必须与 --browser 一起使用');
+  }
+  if (options.profile && options.browser === 'safari') {
+    throw new Error('Safari 不支持 --profile');
   }
 
   openLoginPage();
   await waitForEnter();
-
-  const extracted = await extractFromBrowsers();
-  if (!extracted) {
-    throw new Error('登录后仍未提取到 dbcl2 Cookie，请确认已在浏览器完成登录。');
-  }
-
-  saveAuthCache(extracted);
-  return extracted;
+  return loginFromBrowserCookies(options);
 }
 
 export async function detectAuthSession(): Promise<AuthSession | null> {
-  const cached = readAuthCache();
-  if (cached) return cached;
-
-  const extracted = await extractFromBrowsers();
-  if (!extracted) return null;
-
-  saveAuthCache(extracted);
-  return extracted;
+  return readAuthCache();
 }
 
 export async function ensureAuth(): Promise<AuthSession> {
-  const detected = await detectAuthSession();
-  if (detected) return detected;
+  const cached = readAuthCache();
+  if (!cached) {
+    throw new Error('未找到本地登录态，请先运行 douban login');
+  }
 
-  console.log('未检测到可用豆瓣登录态，正在打开浏览器登录页面...');
-  return loginWithBrowser();
+  let verified: AuthSession;
+  try {
+    verified = await verifyAuthSession(cached);
+  } catch (error) {
+    throw new Error(`无法验证本地登录态，已阻止本次操作：${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  if (cached.accountId && cached.accountId !== verified.accountId) {
+    clearAuthCache();
+    throw new Error(`登录账号校验失败：缓存账号 ${cached.accountId}，当前账号 ${verified.accountId || 'unknown'}。请重新运行 douban login`);
+  }
+
+  if (cached.accountId !== verified.accountId || cached.accountName !== verified.accountName) {
+    saveAuthCache(verified);
+  }
+  return verified;
 }
