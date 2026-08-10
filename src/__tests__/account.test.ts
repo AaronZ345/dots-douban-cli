@@ -17,6 +17,15 @@ function collectionHtml(): string {
     </li>`;
 }
 
+function htmlResponseAt(html: string, url: string): Response {
+  const response = new Response(html, {
+    status: 200,
+    headers: { 'Content-Type': 'text/html' }
+  });
+  Object.defineProperty(response, 'url', { value: url });
+  return response;
+}
+
 describe('authenticated account reads', () => {
   it('loads the current profile from the authenticated mine page', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(
@@ -33,6 +42,50 @@ describe('authenticated account reads', () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://www.douban.com/mine/');
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Cookie')).toBe('dbcl2=secret');
+  });
+
+  it('identifies the current profile after the mine page redirects', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(htmlResponseAt(
+      '<h1><span>Alice</span>（<a href="/edit">编辑</a>）</h1>',
+      'https://www.douban.com/people/alice/?_i=example'
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getCurrentUserProfile('dbcl2=secret')).resolves.toEqual({
+      id: 'alice',
+      name: 'Alice',
+      url: 'https://www.douban.com/people/alice/'
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('uses the profile title when a redirected page has no heading', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(htmlResponseAt(
+      '<title>Alice 的豆瓣</title>',
+      'https://www.douban.com/people/alice/'
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getCurrentUserProfile('dbcl2=secret')).resolves.toMatchObject({
+      id: 'alice',
+      name: 'Alice'
+    });
+  });
+
+  it('does not infer the current account from arbitrary profile links', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(
+        '<a href="https://www.douban.com/people/not-the-user/">Not the user</a>',
+        { status: 200 }
+      ))
+      .mockResolvedValueOnce(new Response(
+        '<a class="lnk-mine" href="https://www.douban.com/people/alice/">Alice</a>',
+        { status: 200 }
+      ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getCurrentUserProfile('dbcl2=secret')).resolves.toMatchObject({ id: 'alice' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('keeps authenticated collection cookies out of the public loader contract', async () => {

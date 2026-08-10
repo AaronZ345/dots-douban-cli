@@ -1,6 +1,6 @@
-import { HttpClient, isChallengeHtml, isLoginHtml } from './http/client.js';
+import { HttpClient, isChallengeHtml, isLoginHtml, type HtmlPage } from './http/client.js';
 
-export { HttpClient } from './http/client.js';
+export { HttpClient, type HtmlPage } from './http/client.js';
 export { HttpRequestError, ResponseSchemaError } from './http/errors.js';
 
 export const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
@@ -19,6 +19,10 @@ export async function fetchJson<T>(url: string, headers: Record<string, string> 
 
 export async function fetchHtml(url: string, headers: Record<string, string> = {}): Promise<string> {
   return httpClient.getHtml(url, headers);
+}
+
+export async function fetchHtmlPage(url: string, headers: Record<string, string> = {}): Promise<HtmlPage> {
+  return httpClient.getHtmlPage(url, headers);
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

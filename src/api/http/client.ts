@@ -13,6 +13,18 @@ export interface HttpClientOptions {
   random?: () => number;
 }
 
+export interface HtmlPage {
+  html: string;
+  url: string;
+  status: number;
+}
+
+interface TextResponse {
+  text: string;
+  url: string;
+  status: number;
+}
+
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 
 function defaultSleep(delayMs: number): Promise<void> {
@@ -125,7 +137,7 @@ export class HttpClient {
   }
 
   async getJson<T>(url: string, headers: Record<string, string> = {}): Promise<T> {
-    const text = await this.getText(url, headers, 'json');
+    const { text } = await this.getText(url, headers, 'json');
     try {
       return JSON.parse(text) as T;
     } catch (error) {
@@ -139,10 +151,20 @@ export class HttpClient {
   }
 
   async getHtml(url: string, headers: Record<string, string> = {}): Promise<string> {
-    return this.getText(url, headers, 'html');
+    const { text } = await this.getText(url, headers, 'html');
+    return text;
   }
 
-  private async getText(url: string, headers: Record<string, string>, kind: ResponseKind): Promise<string> {
+  async getHtmlPage(url: string, headers: Record<string, string> = {}): Promise<HtmlPage> {
+    const response = await this.getText(url, headers, 'html');
+    return {
+      html: response.text,
+      url: response.url,
+      status: response.status
+    };
+  }
+
+  private async getText(url: string, headers: Record<string, string>, kind: ResponseKind): Promise<TextResponse> {
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
@@ -206,7 +228,11 @@ export class HttpClient {
           });
         }
 
-        return text;
+        return {
+          text,
+          url: response.url || url,
+          status: response.status
+        };
       } catch (error) {
         if (error instanceof HttpRequestError) throw error;
         lastError = error;

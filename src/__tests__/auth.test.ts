@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 let tempHome = '';
 let originalHome: string | undefined;
 let originalCliHome: string | undefined;
+const originalStdinIsTty = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
 
 function authCachePath(): string {
   return path.join(tempHome, 'storage', 'auth.json');
@@ -44,6 +45,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.doUnmock('@steipete/sweet-cookie');
+  vi.doUnmock('node:child_process');
+  vi.doUnmock('node:readline/promises');
+  if (originalStdinIsTty) Object.defineProperty(process.stdin, 'isTTY', originalStdinIsTty);
+  else Reflect.deleteProperty(process.stdin, 'isTTY');
   vi.resetModules();
   rmSync(tempHome, { recursive: true, force: true });
 });
@@ -83,6 +88,7 @@ describe.sequential('authentication safety', () => {
       names: ['dbcl2', 'ck'],
       browsers: ['chrome'],
       mode: 'first',
+      timeoutMs: 60_000,
       chromiumBrowser: 'chrome',
       chromeProfile: 'Profile 2'
     }));
@@ -102,6 +108,134 @@ describe.sequential('authentication safety', () => {
     expect(cachePayload).not.toHaveProperty('updatedAt');
     expect(lstatSync(cachePath).mode & 0o777).toBe(0o600);
     expect(lstatSync(path.dirname(cachePath)).mode & 0o777).toBe(0o700);
+  });
+
+  it('allows a longer browser cookie helper timeout', async () => {
+    const reader = vi.fn().mockResolvedValue({
+      cookies: [{ name: 'dbcl2', value: 'browser-secret', source: { browser: 'chrome' } }],
+      warnings: []
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(profileHtml('alice', 'Alice'), { status: 200 })));
+    const auth = await import('../auth.ts');
+
+    await auth.loginFromBrowserCookies({ browser: 'chrome', cookieTimeoutMs: 120_000 }, reader);
+
+    expect(reader).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 120_000 }));
+  });
+
+  it('opens a browser only when explicitly requested', async () => {
+    const spawnSyncMock = vi.fn().mockReturnValue({ status: 0 });
+    const question = vi.fn().mockResolvedValue('');
+    const close = vi.fn();
+    const getCookies = vi.fn().mockResolvedValue({
+      cookies: [{ name: 'dbcl2', value: 'browser-secret', source: { browser: 'chrome' } }],
+      warnings: []
+    });
+    vi.doMock('node:child_process', () => ({ spawnSync: spawnSyncMock }));
+    vi.doMock('node:readline/promises', () => ({
+      default: { createInterface: () => ({ question, close }) }
+    }));
+    vi.doMock('@steipete/sweet-cookie', () => ({ getCookies }));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(profileHtml('alice', 'Alice'), { status: 200 })));
+    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+    const auth = await import('../auth.ts');
+
+    await auth.loginWithBrowser({ browser: 'chrome' });
+
+    expect(spawnSyncMock).not.toHaveBeenCalled();
+    expect(getCookies).toHaveBeenCalledOnce();
+    expect(question).toHaveBeenCalledWith(expect.stringContaining('将从 Chrome 读取 Cookie 并验证豆瓣账号'));
+    expect(question).toHaveBeenCalledWith(expect.stringContaining('douban login --open'));
+
+    await auth.loginWithBrowser({ browser: 'chrome', open: true });
+
+    expect(spawnSyncMock).toHaveBeenCalledOnce();
+    expect(getCookies).toHaveBeenCalledTimes(2);
+    expect(question.mock.calls[1]?.[0]).toContain('该窗口仅用于完成登录');
+    expect(question.mock.calls[1]?.[0]).toContain('以验证到的豆瓣账号为准');
+  });
+
+  it('rejects browser opening with an explicit profile before any side effects', async () => {
+    const spawnSyncMock = vi.fn().mockReturnValue({ status: 0 });
+    const question = vi.fn().mockResolvedValue('');
+    const close = vi.fn();
+    const getCookies = vi.fn();
+    vi.doMock('node:child_process', () => ({ spawnSync: spawnSyncMock }));
+    vi.doMock('node:readline/promises', () => ({
+      default: { createInterface: () => ({ question, close }) }
+    }));
+    vi.doMock('@steipete/sweet-cookie', () => ({ getCookies }));
+    const auth = await import('../auth.ts');
+
+    await expect(auth.loginWithBrowser({
+      browser: 'chrome',
+      profile: 'Profile 2',
+      open: true
+    })).rejects.toThrow('--open 无法保证打开指定浏览器 profile');
+
+    expect(spawnSyncMock).not.toHaveBeenCalled();
+    expect(question).not.toHaveBeenCalled();
+    expect(getCookies).not.toHaveBeenCalled();
+  });
+
+  it('advertises browser opening as an opt-in login flag', async () => {
+    const { registerAuthCommands } = await import('../commands/auth.ts');
+    const program = new Command();
+    registerAuthCommands(program);
+
+    const login = program.commands.find((command) => command.name() === 'login');
+
+    expect(login?.options.map((option) => option.long)).toContain('--open');
+    expect(login?.options.find((option) => option.long === '--open')?.description)
+      .toContain('不能与 --profile 同用');
+    expect(login?.description()).toBe('从本机浏览器读取豆瓣登录态');
+  });
+
+  it('opens the current-account page in the selected browser', async () => {
+    const auth = await import('../auth.ts');
+
+    expect(auth.resolveLoginLaunchCommand('darwin', 'arc')).toEqual({
+      command: 'open',
+      args: ['-b', 'company.thebrowser.Browser', 'https://www.douban.com/mine/']
+    });
+    expect(auth.resolveLoginLaunchCommand('darwin', 'chrome')).toEqual({
+      command: 'open',
+      args: ['-b', 'com.google.Chrome', 'https://www.douban.com/mine/']
+    });
+  });
+
+  it('limits Arc cookie extraction to macOS', async () => {
+    const auth = await import('../auth.ts');
+
+    expect(auth.resolveBrowserCookieTarget('arc', 'darwin')).toEqual({
+      backend: 'chrome',
+      chromiumBrowser: 'arc'
+    });
+    expect(() => auth.resolveBrowserCookieTarget('arc', 'win32'))
+      .toThrow('Arc Cookie 提取目前仅支持 macOS');
+    expect(() => auth.resolveBrowserCookieTarget('arc', 'linux'))
+      .toThrow('Arc Cookie 提取目前仅支持 macOS');
+    expect(() => auth.resolveBrowserCookieTarget('safari', 'win32'))
+      .toThrow('Safari Cookie 提取目前仅支持 macOS');
+  });
+
+  it('rejects interactive login from a pipe or CI input', async () => {
+    const auth = await import('../auth.ts');
+
+    expect(() => auth.assertInteractiveLogin(false)).toThrow('douban login 需要交互式终端');
+    expect(() => auth.assertInteractiveLogin(true)).not.toThrow();
+    expect(() => auth.assertInteractiveLogin(undefined)).toThrow('douban login 需要交互式终端');
+  });
+
+  it('maps supported system browser identifiers to cookie backends', async () => {
+    const auth = await import('../auth.ts');
+
+    expect(auth.browserFromSystemIdentifier('company.thebrowser.browser')).toBe('arc');
+    expect(auth.browserFromSystemIdentifier('com.google.Chrome')).toBe('chrome');
+    expect(auth.browserFromSystemIdentifier('MSEdgeHTM')).toBe('edge');
+    expect(auth.browserFromSystemIdentifier('FirefoxURL-308046B0AF4A39CB')).toBe('firefox');
+    expect(auth.browserFromSystemIdentifier('com.apple.Safari')).toBe('safari');
+    expect(auth.browserFromSystemIdentifier('org.example.unknown')).toBeUndefined();
   });
 
   it('reuses the identity returned by ensureAuth in whoami', async () => {

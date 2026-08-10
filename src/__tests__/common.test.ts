@@ -41,6 +41,26 @@ describe('api/common helpers', () => {
     expect(delays).toEqual([2000]);
   });
 
+  it('exposes the final response URL without changing getHtml output', async () => {
+    const response = new Response('<html>profile</html>', {
+      status: 200,
+      headers: { 'Content-Type': 'text/html' }
+    });
+    Object.defineProperty(response, 'url', {
+      value: 'https://www.douban.com/people/alice/'
+    });
+    const client = new HttpClient({
+      fetchImpl: vi.fn().mockResolvedValue(response),
+      maxAttempts: 1
+    });
+
+    await expect(client.getHtmlPage('https://www.douban.com/mine/')).resolves.toEqual({
+      html: '<html>profile</html>',
+      url: 'https://www.douban.com/people/alice/',
+      status: 200
+    });
+  });
+
   it('rejects challenge pages with a structured error', async () => {
     const client = new HttpClient({
       fetchImpl: async () => new Response('<form name="sec" id="sec">安全验证</form>', {

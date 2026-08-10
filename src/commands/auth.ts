@@ -7,6 +7,7 @@ import {
   type BrowserName
 } from '../auth.js';
 import { withErrorHandler } from '../utils/error.js';
+import { parsePositiveIntAtMost } from '../utils/parsing.js';
 import { withSpinner } from '../utils/spinner.js';
 
 function maskToken(token: string | undefined): string | undefined {
@@ -30,19 +31,21 @@ function toSafeSessionJson(session: AuthSession): Record<string, string | undefi
 function parseBrowserName(value: string | undefined): BrowserName | undefined {
   if (!value) return undefined;
   const normalized = value.trim().toLowerCase();
-  if (normalized === 'chrome' || normalized === 'edge' || normalized === 'firefox' || normalized === 'safari') {
+  if (normalized === 'chrome' || normalized === 'arc' || normalized === 'edge' || normalized === 'firefox' || normalized === 'safari') {
     return normalized;
   }
-  throw new Error('--browser 仅支持 chrome、edge、firefox 或 safari');
+  throw new Error('--browser 仅支持 chrome、arc、edge、firefox 或 safari');
 }
 
 export function registerAuthCommands(program: Command): void {
   program
     .command('login')
     .helpGroup('收藏与账号:')
-    .description('打开浏览器登录豆瓣并保存 Cookie')
-    .option('--browser <browser>', '明确从指定浏览器读取登录态')
+    .description('从本机浏览器读取豆瓣登录态')
+    .option('--browser <browser>', '明确从指定浏览器读取登录态（Arc 仅 macOS）')
     .option('--profile <profile>', '指定浏览器配置目录（需配合 --browser）')
+    .option('--cookie-timeout <seconds>', '浏览器 Cookie/钥匙串读取超时（1-300 秒）', '60')
+    .option('--open', '打开浏览器的豆瓣当前账号页（不能与 --profile 同用）')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler({
       command: 'login',
@@ -50,14 +53,21 @@ export function registerAuthCommands(program: Command): void {
     }, async (opts) => {
       const browser = parseBrowserName(opts.browser);
       const profile = typeof opts.profile === 'string' ? opts.profile.trim() : undefined;
+      const cookieTimeoutSeconds = parsePositiveIntAtMost(
+        opts.cookieTimeout,
+        '--cookie-timeout',
+        60,
+        300
+      );
       if (profile && !browser) throw new Error('--profile 必须与 --browser 一起使用');
       if (profile && browser === 'safari') throw new Error('Safari 不支持 --profile');
 
-      const session = await withSpinner(
-        '正在打开浏览器登录豆瓣...',
-        () => loginWithBrowser({ browser, profile }),
-        !opts.json
-      );
+      const session = await loginWithBrowser({
+        browser,
+        profile,
+        cookieTimeoutMs: cookieTimeoutSeconds * 1000,
+        open: Boolean(opts.open)
+      });
 
       if (opts.json) {
         console.log(JSON.stringify(toSafeSessionJson(session), null, 2));
