@@ -23,6 +23,8 @@ assert.match(rootHelp.stdout, /电影:/);
 assert.match(rootHelp.stdout, /书籍:/);
 assert.match(rootHelp.stdout, /收藏与账号:/);
 assert.match(rootHelp.stdout, /写入操作:/);
+const bookSection = rootHelp.stdout.match(/书籍:\n([\s\S]*?)\n收藏与账号:/)?.[1];
+assert.ok(bookSection);
 for (const bookCommand of [
   'hot',
   'top250',
@@ -37,9 +39,11 @@ for (const bookCommand of [
   'reviews',
   'notes'
 ]) {
-  assert.match(rootHelp.stdout, new RegExp(`douban book ${bookCommand.replace('|', '\\|')}`));
+  assert.match(bookSection, new RegExp(`book ${bookCommand.replace('|', '\\|')}`));
 }
-assert.doesNotMatch(rootHelp.stdout, /douban book tag/);
+assert.doesNotMatch(bookSection, /^\s+book\s{2,}/m);
+assert.doesNotMatch(rootHelp.stdout, /图书功能:/);
+assert.doesNotMatch(rootHelp.stdout, /book tag/);
 assert.equal(rootHelp.stderr, '');
 
 const bookHelp = run('book', '--help');

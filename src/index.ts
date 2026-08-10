@@ -28,7 +28,7 @@ program
   });
 
 registerMovieCommands(program);
-registerBookCommands(program);
+const bookCommand = registerBookCommands(program);
 registerUserCommands(program);
 
 registerListCommands(program);
@@ -36,21 +36,27 @@ registerAuthCommands(program);
 registerMarkCommands(program);
 registerSocialCommands(program);
 
+const defaultHelp = new Help();
+program.configureHelp({
+  visibleCommands: (command) => {
+    const visibleCommands = defaultHelp.visibleCommands(command);
+    const visibleBookCommands = new Set(defaultHelp.visibleCommands(bookCommand));
+
+    return visibleCommands.flatMap((subcommand) => (
+      subcommand === bookCommand
+        ? bookCommand.commands.filter((bookSubcommand) => visibleBookCommands.has(bookSubcommand))
+        : [subcommand]
+    ));
+  },
+  subcommandTerm: (command) => (
+    command.parent === bookCommand
+      ? `book ${defaultHelp.subcommandTerm(command)}`
+      : defaultHelp.subcommandTerm(command)
+  )
+});
+
 program.addHelpText('beforeAll', () => `douban - 豆瓣命令行工具 v${program.version()}\n`);
-program.addHelpText('after', () => {
-  const book = program.commands.find((command) => command.name() === 'book');
-  const bookCommands = book?.commands ?? [];
-  const help = new Help();
-  const terms = bookCommands.map((command) => help.subcommandTerm(command));
-  const termWidth = Math.max(...terms.map((term) => term.length), 0);
-  const bookSummary = bookCommands
-    .map((command, index) => `  douban book ${terms[index].padEnd(termWidth)}  ${command.description()}`)
-    .join('\n');
-
-  return `
-图书功能:
-${bookSummary}
-
+program.addHelpText('after', () => `
 示例:
   douban hot             查看热门电影
   douban search 沙丘     搜索电影
@@ -58,8 +64,7 @@ ${bookSummary}
   douban movie 1292052   查看电影详情
   douban book chart      查看当前热门图书榜
   douban book info 三体  查看书籍详情
-`;
-});
+`);
 
 program.parseAsync().catch((error) => {
   handleProgramError(error);

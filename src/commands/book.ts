@@ -110,10 +110,11 @@ function registerTop250Command(book: Command, name: 'hot' | 'top250'): void {
     }));
 }
 
-export function registerBookCommands(program: Command): void {
+export function registerBookCommands(program: Command): Command {
   const book = program
     .command('book')
     .helpGroup('书籍:')
+    .commandsGroup('书籍:')
     .description('豆瓣书籍：榜单、搜索、详情、评分、短评、书评、笔记与收藏');
 
   registerTop250Command(book, 'hot');
@@ -398,4 +399,5 @@ export function registerBookCommands(program: Command): void {
     }));
 
   registerBookCollectionCommands(book);
+  return book;
 }
