@@ -6,6 +6,11 @@ import globals from 'globals';
 export default defineConfig([
   globalIgnores(['dist/', 'node_modules/']),
   {
+    linterOptions: {
+      reportUnusedDisableDirectives: 'error'
+    }
+  },
+  {
     files: ['src/**/*.ts'],
     extends: [eslint.configs.recommended, tseslint.configs['flat/recommended']]
   },
