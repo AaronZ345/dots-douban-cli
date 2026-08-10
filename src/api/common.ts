@@ -21,6 +21,10 @@ export async function fetchHtml(url: string, headers: Record<string, string> = {
   return httpClient.getHtml(url, headers);
 }
 
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export function decodeHtml(text: string): string {
   return text
     .replace(/&nbsp;/g, ' ')

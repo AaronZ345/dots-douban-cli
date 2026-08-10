@@ -33,6 +33,14 @@ describe('book parsers', () => {
     expect(page.items[0]).toMatchObject({ id: '16', title: '书 16', rating: '8.5', year: '2026' });
   });
 
+  it('rejects malformed search payloads instead of treating them as empty results', () => {
+    const missingItems = '<script>window.__DATA__ = {"start":0,"count":1,"total":1};</script>';
+    const invalidCount = '<script>window.__DATA__ = {"start":0,"count":"1","total":1,"items":[]};</script>';
+
+    expect(() => parseBookSearchPage(missingItems)).toThrow('items 不是数组');
+    expect(() => parseBookSearchPage(invalidCount)).toThrow('count 不是非负整数');
+  });
+
   it('parses current chart media blocks', () => {
     const html = `
       <li class="media clearfix">
@@ -91,6 +99,12 @@ describe('book parsers', () => {
 describe('book API orchestration', () => {
   it('rejects malformed annotation responses instead of returning an empty list', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({})));
+
+    await expect(getBookNotes('2567698')).rejects.toMatchObject({ code: 'SCHEMA_MISMATCH' });
+  });
+
+  it('rejects malformed annotation entries without leaking TypeErrors', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ annotations: [null] })));
 
     await expect(getBookNotes('2567698')).rejects.toMatchObject({ code: 'SCHEMA_MISMATCH' });
   });

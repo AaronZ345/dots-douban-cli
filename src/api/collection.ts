@@ -189,7 +189,6 @@ async function loadUserCollectionPage(
       warnings.push(`start=${cursor} 页面预计 ${page.expectedCount} 条，实际解析 ${page.items.length} 条`);
     }
 
-    const remaining = count - results.length;
     let consumedFromPage = 0;
     for (const item of page.items) {
       consumedFromPage += 1;
@@ -227,7 +226,6 @@ async function loadUserCollectionPage(
 
     cursor = page.nextStart;
     nextStart = cursor;
-    if (remaining <= 0) break;
   }
 
   if (results.length < count && nextStart !== null && warnings.length === 0) {

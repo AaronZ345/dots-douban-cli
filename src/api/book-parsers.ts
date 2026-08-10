@@ -1,4 +1,11 @@
-import { cleanText, extractField, extractWindowJsonObject, normalizeTitle } from './common.js';
+import {
+  cleanText,
+  extractField,
+  extractWindowJsonObject,
+  isRecord,
+  normalizeTitle,
+  ResponseSchemaError
+} from './common.js';
 
 export interface ParsedBookListItem {
   id: string;
@@ -181,50 +188,69 @@ export function parseBookSubjectList(html: string): ParsedBookListItem[] {
   return results;
 }
 
-export function parseBookSearchPage(html: string): ParsedBookSearchPage {
+function readPaginationValue(
+  data: Record<string, unknown>,
+  field: 'start' | 'count' | 'total',
+  url: string
+): number {
+  const value = data[field];
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    throw new ResponseSchemaError(`图书搜索页 __DATA__.${field} 不是非负整数`, url);
+  }
+  return value;
+}
+
+export function parseBookSearchPage(
+  html: string,
+  url = 'https://search.douban.com/book/subject_search'
+): ParsedBookSearchPage {
   const rawData = extractWindowJsonObject(html, '__DATA__');
-  if (!rawData) throw new Error('图书搜索页未找到完整的 __DATA__ JSON 数据');
+  if (!rawData) throw new ResponseSchemaError('图书搜索页未找到完整的 __DATA__ JSON 数据', url);
 
-  const data = JSON.parse(rawData) as {
-    start?: number;
-    count?: number;
-    total?: number;
-    items?: Array<{
-      tpl_name?: string;
-      id?: string | number;
-      title?: string;
-      url?: string;
-      cover_url?: string;
-      abstract?: string;
-      rating?: { value?: number };
-    }>;
-  };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawData);
+  } catch (error) {
+    throw new ResponseSchemaError(
+      `图书搜索页 __DATA__ 解析失败: ${error instanceof Error ? error.message : String(error)}`,
+      url,
+      rawData.slice(0, 240)
+    );
+  }
+  if (!isRecord(parsed) || !Array.isArray(parsed.items)) {
+    throw new ResponseSchemaError('图书搜索页 __DATA__.items 不是数组', url, rawData.slice(0, 240));
+  }
 
-  const items = (data.items || [])
-    .filter((item) => item.tpl_name === 'search_subject' && !!item.url)
+  const items = parsed.items
+    .filter(isRecord)
+    .filter((item) => item.tpl_name === 'search_subject' && typeof item.url === 'string')
     .map((item) => {
-      const ratingValue = typeof item.rating?.value === 'number' ? item.rating.value.toFixed(1) : '-';
-      const yearMatch = (item.abstract || '').match(/(19|20)\d{2}/);
+      const rating = isRecord(item.rating) ? item.rating.value : undefined;
+      const ratingValue = typeof rating === 'number' && Number.isFinite(rating) ? rating.toFixed(1) : '-';
+      const abstract = typeof item.abstract === 'string' ? item.abstract : '';
+      const yearMatch = abstract.match(/(19|20)\d{2}/);
       return {
-        id: String(item.id || ''),
-        title: normalizeTitle(item.title || ''),
+        id: typeof item.id === 'string' || typeof item.id === 'number' ? String(item.id).trim() : '',
+        title: normalizeTitle(typeof item.title === 'string' ? item.title : ''),
         rating: ratingValue,
         votes: '-',
-        meta: cleanText(item.abstract || '') || '-',
+        meta: cleanText(abstract) || '-',
         year: yearMatch?.[0],
-        url: item.url || '',
-        cover: item.cover_url,
-        abstract: cleanText(item.abstract || '')
+        url: item.url as string,
+        cover: typeof item.cover_url === 'string' ? item.cover_url : undefined,
+        abstract: cleanText(abstract)
       };
     })
     .filter((item) => item.id && item.title);
 
-  return {
-    items,
-    start: typeof data.start === 'number' ? data.start : 0,
-    count: typeof data.count === 'number' && data.count > 0 ? data.count : items.length,
-    total: typeof data.total === 'number' && data.total >= 0 ? data.total : items.length
-  };
+  const start = readPaginationValue(parsed, 'start', url);
+  const count = readPaginationValue(parsed, 'count', url);
+  const total = readPaginationValue(parsed, 'total', url);
+  if (count > 0 && items.length === 0 && start < total) {
+    throw new ResponseSchemaError('图书搜索页声明有结果但未解析出任何书籍', url, rawData.slice(0, 240));
+  }
+
+  return { items, start, count, total };
 }
 
 function extractSection(html: string, heading: string): string {

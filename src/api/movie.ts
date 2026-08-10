@@ -1,4 +1,4 @@
-import { BASE, cleanText, extractField, fetchHtml, fetchJson, isChallengePage, normalizeTitle, ResponseSchemaError } from './common.js';
+import { BASE, cleanText, extractField, fetchHtml, fetchJson, isChallengePage, isRecord, normalizeTitle, ResponseSchemaError } from './common.js';
 import {
   getSubjectComments,
   getSubjectRatingStats,
@@ -418,9 +418,29 @@ export async function getMovieDetail(id: string): Promise<MovieDetail> {
 export async function getHot(type: 'movie' | 'tv', tag: string, limit = 20): Promise<Subject[]> {
   if (!Number.isInteger(limit) || limit <= 0) return [];
   const url = `${BASE}/j/search_subjects?type=${type}&tag=${encodeURIComponent(tag)}&page_limit=${limit}&page_start=0`;
-  const data = await fetchJson<{ subjects: Subject[] }>(url);
-  if (!Array.isArray(data.subjects)) throw new ResponseSchemaError('热门影视接口返回格式异常', url);
-  return data.subjects;
+  const data = await fetchJson<unknown>(url);
+  if (!isRecord(data) || !Array.isArray(data.subjects)) {
+    throw new ResponseSchemaError('热门影视接口返回格式异常', url);
+  }
+  const subjects = data.subjects
+    .filter(isRecord)
+    .map((item): Subject | null => {
+      const id = typeof item.id === 'string' || typeof item.id === 'number' ? String(item.id).trim() : '';
+      const title = typeof item.title === 'string' ? normalizeTitle(item.title) : '';
+      if (!id || !title) return null;
+      return {
+        id,
+        title,
+        rate: typeof item.rate === 'string' || typeof item.rate === 'number' ? String(item.rate) : '-',
+        url: typeof item.url === 'string' ? item.url : `${BASE}/subject/${id}/`,
+        cover: typeof item.cover === 'string' ? item.cover : ''
+      };
+    })
+    .filter((item): item is Subject => item !== null);
+  if (data.subjects.length > 0 && subjects.length === 0) {
+    throw new ResponseSchemaError('热门影视接口未解析出有效条目', url);
+  }
+  return subjects;
 }
 
 /**
@@ -431,10 +451,40 @@ export async function getHot(type: 'movie' | 'tv', tag: string, limit = 20): Pro
 export async function getRank(typeId: number, limit = 20): Promise<RankItem[]> {
   if (!Number.isInteger(limit) || limit <= 0) return [];
   const url = `${BASE}/j/chart/top_list?type=${typeId}&interval_id=100:90&start=0&limit=${limit}`;
-  const data = await fetchJson<RankItem[] | { data?: RankItem[] }>(url);
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data.data)) return data.data;
-  throw new ResponseSchemaError('分类榜单接口返回格式异常', url);
+  const data = await fetchJson<unknown>(url);
+  const rawItems = Array.isArray(data)
+    ? data
+    : isRecord(data) && Array.isArray(data.data)
+      ? data.data
+      : null;
+  if (!rawItems) throw new ResponseSchemaError('分类榜单接口返回格式异常', url);
+
+  const items = rawItems
+    .filter(isRecord)
+    .map((item): RankItem | null => {
+      const id = typeof item.id === 'string' || typeof item.id === 'number' ? String(item.id).trim() : '';
+      const title = typeof item.title === 'string' ? normalizeTitle(item.title) : '';
+      if (!id || !title) return null;
+      return {
+        id,
+        title,
+        score: typeof item.score === 'string' || typeof item.score === 'number' ? String(item.score) : '-',
+        vote_count: typeof item.vote_count === 'number' && Number.isFinite(item.vote_count)
+          ? Math.max(0, Math.trunc(item.vote_count))
+          : 0,
+        types: normalizeArrayField(item.types),
+        regions: normalizeArrayField(item.regions),
+        release_date: typeof item.release_date === 'string' ? cleanText(item.release_date) : '',
+        actors: normalizeArrayField(item.actors),
+        url: typeof item.url === 'string' ? item.url : `${BASE}/subject/${id}/`,
+        cover_url: typeof item.cover_url === 'string' ? item.cover_url : ''
+      };
+    })
+    .filter((item): item is RankItem => item !== null);
+  if (rawItems.length > 0 && items.length === 0) {
+    throw new ResponseSchemaError('分类榜单接口未解析出有效条目', url);
+  }
+  return items;
 }
 
 /** Genre type mapping */
@@ -480,6 +530,7 @@ export async function getTop250(start = 0, limit = 25): Promise<Top250Item[]> {
       break;
     }
 
+    let added = 0;
     for (const item of items) {
       if (results.length >= limit) break;
 
@@ -518,8 +569,10 @@ export async function getTop250(start = 0, limit = 25): Promise<Top250Item[]> {
         quote: quoteMatch ? cleanText(quoteMatch[1]) : '',
         url
       });
+      added += 1;
     }
 
+    if (added === 0 || pageStart + 25 >= 250) break;
     pageStart += 25;
   }
 

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getBookChart, getLatestBooks, searchBooks } from '../api/book.ts';
 import { getUserCollectionPage } from '../api/collection.ts';
-import { getMovieDetail } from '../api/movie.ts';
-import { searchMovies } from '../api/search.ts';
+import { getHot, getMovieDetail, getRank, getTop250 } from '../api/movie.ts';
+import { parseMovieSearchPage, searchMovies } from '../api/search.ts';
 import { getSubjectComments, getSubjectRatingStats, getSubjectReviews } from '../api/subject.ts';
 
 afterEach(() => {
@@ -34,6 +34,11 @@ function htmlResponse(html: string, status = 200): Response {
 }
 
 describe('search reliability', () => {
+  it('rejects malformed movie search pagination metadata', () => {
+    const html = '<script>window.__DATA__ = {"start":0,"count":null,"total":1,"items":[]};</script>';
+    expect(() => parseMovieSearchPage(html)).toThrow('count 不是非负整数');
+  });
+
   it('uses HTML movie search as the primary path and aggregates pages', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
@@ -81,6 +86,32 @@ describe('search reliability', () => {
 });
 
 describe('movie source orchestration', () => {
+  it('returns structured schema errors for malformed list endpoints', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      return url.includes('/search_subjects')
+        ? Response.json(null)
+        : Response.json({ data: [null] });
+    }));
+
+    await expect(getHot('movie', '热门')).rejects.toMatchObject({ code: 'SCHEMA_MISMATCH' });
+    await expect(getRank(17)).rejects.toMatchObject({ code: 'SCHEMA_MISMATCH' });
+  });
+
+  it('stops Top250 pagination when the upstream page makes no progress', async () => {
+    const items = Array.from({ length: 25 }, (_, index) => `
+      <div class="item">
+        <em>${index + 1}</em>
+        <a href="https://movie.douban.com/subject/${index + 1}/"><span class="title">电影 ${index + 1}</span></a>
+        <span class="rating_num">8.0</span>
+      </div>`).join('');
+    const fetchMock = vi.fn(async () => htmlResponse(items));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getTop250(0, 30)).resolves.toHaveLength(25);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('merges concurrent sources without requesting TV data for a movie', async () => {
     const requested: string[] = [];
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
@@ -107,6 +138,16 @@ describe('movie source orchestration', () => {
 describe('partial rating and collection data', () => {
   it('rejects malformed review and comment response objects', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({})));
+
+    await expect(getSubjectReviews('book', '123')).rejects.toMatchObject({ code: 'SCHEMA_MISMATCH' });
+    await expect(getSubjectComments('movie', '123')).rejects.toMatchObject({ code: 'SCHEMA_MISMATCH' });
+  });
+
+  it('rejects malformed review and comment entries without leaking TypeErrors', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      return Response.json(url.includes('/reviews') ? { reviews: [null] } : { interests: [null] });
+    }));
 
     await expect(getSubjectReviews('book', '123')).rejects.toMatchObject({ code: 'SCHEMA_MISMATCH' });
     await expect(getSubjectComments('movie', '123')).rejects.toMatchObject({ code: 'SCHEMA_MISMATCH' });

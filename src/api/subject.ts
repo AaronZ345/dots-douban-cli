@@ -1,4 +1,4 @@
-import { cleanText, fetchJson, ResponseSchemaError } from './common.js';
+import { cleanText, fetchJson, isRecord, ResponseSchemaError } from './common.js';
 import { debug } from '../utils/debug.js';
 
 export type SubjectKind = 'movie' | 'book';
@@ -37,10 +37,6 @@ export interface SubjectRatingStats {
   done_count: number;
   doing_count: number;
   type_ranks: Array<{ type: string; rank: number }>;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function normalizeSubjectId(value: string, kind: SubjectKind): string {
@@ -90,9 +86,12 @@ export async function getSubjectReviews(
   if (!isRecord(rawData) || !Array.isArray(rawData.reviews)) {
     throw new ResponseSchemaError('评论接口返回格式异常', url);
   }
-  const data = rawData as unknown as ReviewResponse;
+  const reviews = rawData.reviews.filter(isRecord) as unknown as ReviewResponse['reviews'];
+  if (rawData.reviews.length > 0 && reviews.length === 0) {
+    throw new ResponseSchemaError('评论接口未返回有效条目', url);
+  }
 
-  const items = data.reviews.filter((item) => !!item.id).map((item) => ({
+  const items = reviews.filter((item) => !!item.id).map((item) => ({
     id: item.id || '',
     user: cleanText(item.user?.name || '') || '匿名',
     rating: typeof item.rating?.value === 'number' && Number.isFinite(item.rating.value)
@@ -106,8 +105,8 @@ export async function getSubjectReviews(
     url: item.url || `https://${kind}.douban.com/review/${item.id}/`
   }));
 
-  const total = typeof data.total === 'number' && Number.isFinite(data.total) && data.total >= 0
-    ? data.total
+  const total = typeof rawData.total === 'number' && Number.isFinite(rawData.total) && rawData.total >= 0
+    ? rawData.total
     : items.length;
 
   return { items, total };
@@ -147,9 +146,12 @@ export async function getSubjectComments(
   if (!isRecord(rawData) || !Array.isArray(rawData.interests)) {
     throw new ResponseSchemaError('短评接口返回格式异常', url);
   }
-  const data = rawData as { total?: number; interests: Interest[] };
+  const interests = rawData.interests.filter(isRecord) as unknown as Interest[];
+  if (rawData.interests.length > 0 && interests.length === 0) {
+    throw new ResponseSchemaError('短评接口未返回有效条目', url);
+  }
 
-  const items = data.interests
+  const items = interests
     .filter((item) => cleanText(item.comment || '').length > 0)
     .filter((item) => !!item.id)
     .map((item) => ({
@@ -167,8 +169,8 @@ export async function getSubjectComments(
       url: `https://www.douban.com/doubanapp/dispatch?uri=/${kind}/${id}/interest/${item.id || ''}`
     }));
 
-  const total = typeof data.total === 'number' && Number.isFinite(data.total) && data.total >= 0
-    ? data.total
+  const total = typeof rawData.total === 'number' && Number.isFinite(rawData.total) && rawData.total >= 0
+    ? rawData.total
     : items.length;
 
   return { items, total };
@@ -251,12 +253,11 @@ export async function getSubjectRatingStats(
       ? Math.max(0, Math.trunc(ratingData.doing_count))
       : 0,
     type_ranks: Array.isArray(ratingData.type_ranks)
-      ? ratingData.type_ranks.filter((item) => (
-        !!item
-        && typeof item.type === 'string'
+      ? ratingData.type_ranks.filter(isRecord).filter((item) => (
+        typeof item.type === 'string'
         && typeof item.rank === 'number'
         && Number.isFinite(item.rank)
-      ))
+      )) as Array<{ type: string; rank: number }>
       : []
   };
 }
