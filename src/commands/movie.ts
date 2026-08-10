@@ -615,8 +615,7 @@ export function registerMovieCommands(program: Command): void {
   program
     .command('comments <movieId>')
     .helpGroup('电影:')
-    .description('按电影 ID 获取短评')
-    .option('--latest', '按最新排序（默认按热门）')
+    .description('按电影 ID 获取热门短评')
     .option('-p, --page <n>', '页码（从 1 开始）', '1')
     .option('-n, --limit <n>', '返回数量', '20')
     .option('--json', '以 JSON 输出')
@@ -626,7 +625,6 @@ export function registerMovieCommands(program: Command): void {
       suggestion: '可尝试：douban comments 1292052'
     }), async (movieId, opts) => {
       const id = normalizeMovieIdInput(movieId);
-      const orderBy = opts.latest ? 'latest' : 'hot';
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
       const page = parsePositiveInt(opts.page, '--page', 1);
 
@@ -634,8 +632,8 @@ export function registerMovieCommands(program: Command): void {
         // JSON mode returns one page without an interactive prompt.
         const start = pageToOffset(page, limit);
         const { items, total } = await withSpinner(
-          `正在获取${opts.latest ? '最新' : '热门'}短评...`,
-          () => getComments(id, orderBy, start, limit),
+          '正在获取热门短评...',
+          () => getComments(id, 'hot', start, limit),
           false
         );
         console.log(JSON.stringify({ items, total }, null, 2));
@@ -648,8 +646,8 @@ export function registerMovieCommands(program: Command): void {
         fetchPage: async (currentPage) => {
           const start = pageToOffset(currentPage, limit);
           const { items, total } = await withSpinner(
-            `正在获取${opts.latest ? '最新' : '热门'}短评...`,
-            () => getComments(id, orderBy, start, limit),
+            '正在获取热门短评...',
+            () => getComments(id, 'hot', start, limit),
             true
           );
           return {
@@ -663,7 +661,7 @@ export function registerMovieCommands(program: Command): void {
           const { from, to } = getPageRange(currentPage, limit, items.length);
 
           console.log(`
-💬 ${opts.latest ? '最新' : '热门'}短评 (${id})
+💬 热门短评 (${id})
 `);
           console.log(`共 ${(total ?? 0).toLocaleString()} 条短评，当前显示第 ${from}-${to} 条
 `);

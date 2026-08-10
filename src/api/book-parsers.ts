@@ -65,11 +65,6 @@ function splitField(value: string): string[] {
     .filter(Boolean);
 }
 
-function readAttribute(tag: string, name: string): string {
-  const match = tag.match(new RegExp(`${name}=["']([^"']*)["']`, 'i'));
-  return match ? cleanText(match[1]) : '';
-}
-
 function parseVotes(block: string): string {
   const match = block.match(/<span[^>]*class=["'][^"']*\bpl\b[^"']*["'][^>]*>\s*\(([\s\S]*?)\)\s*<\/span>/i)
     || block.match(/<span[^>]*class=["'][^"']*color-gray[^"']*["'][^>]*>\s*\(([\s\S]*?)\)\s*<\/span>/i);
@@ -151,37 +146,6 @@ export function parseBookMediaList(html: string): ParsedBookListItem[] {
       rank: rankMatch ? Number(rankMatch[1]) : undefined,
       trend,
       tags
-    });
-  }
-
-  return results;
-}
-
-export function parseBookSubjectList(html: string): ParsedBookListItem[] {
-  const results: ParsedBookListItem[] = [];
-  const itemRegex = /<li[^>]*class=["'][^"']*subject-item[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi;
-  let itemMatch: RegExpExecArray | null;
-
-  while ((itemMatch = itemRegex.exec(html)) !== null) {
-    const block = itemMatch[1];
-    const linkMatch = block.match(/<a[^>]*href=["'](https:\/\/book\.douban\.com\/subject\/(\d+)\/)["'][^>]*title=["']([^"']+)["'][^>]*>/i)
-      || block.match(/<a[^>]*href=["'](https:\/\/book\.douban\.com\/subject\/(\d+)\/)["'][^>]*>([\s\S]*?)<\/a>/i);
-    if (!linkMatch) continue;
-
-    const ratingMatch = block.match(/<span[^>]*class=["'][^"']*rating_nums[^"']*["'][^>]*>([\s\S]*?)<\/span>/i);
-    const metaMatch = block.match(/<div[^>]*class=["'][^"']*\bpub\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i);
-    const abstractMatch = block.match(/<div[^>]*class=["'][^"']*\binfo\b[^"']*["'][^>]*>[\s\S]*?<p>([\s\S]*?)<\/p>/i);
-    const coverTag = block.match(/<img\b[^>]*>/i)?.[0] || '';
-
-    results.push({
-      id: linkMatch[2],
-      title: normalizeTitle(linkMatch[3]),
-      rating: ratingMatch ? cleanText(ratingMatch[1]) : '-',
-      votes: parseVotes(block),
-      meta: metaMatch ? cleanText(metaMatch[1]) : '-',
-      url: linkMatch[1],
-      cover: readAttribute(coverTag, 'src') || undefined,
-      abstract: abstractMatch ? cleanText(abstractMatch[1]) : undefined
     });
   }
 

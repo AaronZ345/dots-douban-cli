@@ -656,9 +656,9 @@ export async function getReviews(movieId: string, start = 0, limit = 20): Promis
 
 /**
  * Get movie comments (short reviews) from mobile API.
- * order_by: 'hot' (default) or 'latest'
+ * The order parameter remains for compatibility and only accepts hot sorting.
  */
-export async function getComments(movieId: string, orderBy: 'hot' | 'latest' = 'hot', start = 0, count = 20): Promise<PaginatedResult<CommentItem>> {
+export async function getComments(movieId: string, orderBy: 'hot' = 'hot', start = 0, count = 20): Promise<PaginatedResult<CommentItem>> {
   return getSubjectComments('movie', movieId, orderBy, start, count);
 }
 

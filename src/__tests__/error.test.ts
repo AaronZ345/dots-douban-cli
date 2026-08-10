@@ -78,10 +78,10 @@ describe('utils/error', () => {
   });
 
   it('does not treat an endpoint-specific 403 as a missing login', async () => {
-    process.argv = ['node', 'douban', 'comments', '123', '--latest', '--json'];
+    process.argv = ['node', 'douban', 'comments', '123', '--json'];
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const action = withErrorHandler({ command: 'comments' }, async () => {
-      const error = new Error('HTTP 403 for latest comments') as Error & { code: string; status: number };
+      const error = new Error('HTTP 403 for an endpoint-specific request') as Error & { code: string; status: number };
       error.code = 'HTTP_STATUS';
       error.status = 403;
       throw error;

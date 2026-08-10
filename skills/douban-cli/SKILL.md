@@ -31,7 +31,7 @@ description: "当用户明确要求以豆瓣为数据源，或明确要求使用
 | 找热门电影、剧集或类型高分片 | `hot`、`tv`、`rank` |
 | 查 Top250、待上映或口碑榜 | `top250`、`coming`、`weekly` |
 | 搜索电影并查看详情、评分或评论 | `search` → `movie` / `rating` / `comments` / `reviews` |
-| 找热门、新书、Top250 或标签图书 | `book chart`、`book new`、`book top250`、`book tag` |
+| 找热门、新书或 Top250 图书 | `book chart`、`book new`、`book top250` |
 | 搜索图书并查看详情或阅读内容 | `book search` → `book info` / `rating` / `comments` / `reviews` / `notes` |
 | 查看公开片单、书单或热门豆列 | `user`、`book user`、`list` |
 | 导出公开书单 | `book export` |
@@ -53,7 +53,7 @@ description: "当用户明确要求以豆瓣为数据源，或明确要求使用
 | `douban search <keyword> [-s <start>] [-n <limit>]` | 搜索电影，使用偏移量分页 |
 | `douban movie <id-or-title>` | 电影或剧集详情，可传数字 ID 或片名 |
 | `douban rating <id>` | 评分分布、想看/看过统计和类型排名；只接受数字 ID |
-| `douban comments <id> [--latest] [-p <page>] [-n <limit>]` | 热门或最新短评，支持交互翻页 |
+| `douban comments <id> [-p <page>] [-n <limit>]` | 热门短评，支持交互翻页 |
 | `douban reviews <id> [-p <page>] [-n <limit>]` | 热门影评，支持交互翻页 |
 
 `rank` 支持：剧情、喜剧、动作、爱情、科幻、动画、悬疑、惊悚、恐怖、纪录片、短片、情色、同性、音乐、歌舞、家庭、儿童、传记、历史、战争、犯罪、西部、奇幻、冒险、灾难、武侠、古装、运动、黑色电影。
@@ -63,7 +63,7 @@ description: "当用户明确要求以豆瓣为数据源，或明确要求使用
 ```bash
 douban search "沙丘"
 douban rating 35575567
-douban comments 35575567 --latest
+douban comments 35575567
 ```
 
 ## 图书命令
@@ -76,11 +76,10 @@ douban comments 35575567 --latest
 | `douban book top250 [-s <start>] [-n <limit>]` | 图书 Top250，使用偏移量分页 |
 | `douban book chart [category] [-n <limit>]` | 当前热门图书榜，最多 20 条 |
 | `douban book new [category] [-n <limit>]` | 新书速递，最多 20 条；别名 `book latest` |
-| `douban book tag <tag> [--sort <sort>] [-s <start>] [-n <limit>]` | 按标签浏览；排序为综合、出版或评价 |
 | `douban book search <keyword> [-s <start>] [-n <limit>]` | 按书名、作者或 ISBN 搜索 |
 | `douban book info <id|isbn|keyword>` | 图书详情 |
 | `douban book rating <id|isbn|keyword>` | 五星分布与想读/在读/读过统计 |
-| `douban book comments <query> [--latest] [-p <page>] [-n <limit>]` | 热门或最新短评，支持交互翻页 |
+| `douban book comments <query> [-p <page>] [-n <limit>]` | 热门短评，支持交互翻页 |
 | `douban book reviews <query> [-p <page>] [-n <limit>]` | 热门书评，支持交互翻页 |
 | `douban book notes <query> [-p <page>] [-n <limit>]` | 热门读书笔记，支持交互翻页 |
 | `douban book user <userId> [--wish|--reading] [-p <page>] [-n <limit>]` | 公开书单；默认读过，可切换想读或在读 |

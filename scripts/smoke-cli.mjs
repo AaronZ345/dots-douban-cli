@@ -30,7 +30,6 @@ for (const bookCommand of [
   'export',
   'chart',
   'new|latest',
-  'tag',
   'search',
   'info',
   'rating',
@@ -40,6 +39,7 @@ for (const bookCommand of [
 ]) {
   assert.match(rootHelp.stdout, new RegExp(`douban book ${bookCommand.replace('|', '\\|')}`));
 }
+assert.doesNotMatch(rootHelp.stdout, /douban book tag/);
 assert.equal(rootHelp.stderr, '');
 
 const bookHelp = run('book', '--help');
@@ -48,6 +48,15 @@ assert.match(bookHelp.stdout, /Usage: douban book/);
 assert.match(bookHelp.stdout, /top250/);
 assert.match(bookHelp.stdout, /chart/);
 assert.match(bookHelp.stdout, /comments/);
+assert.doesNotMatch(bookHelp.stdout, /\btag\b/);
+
+const movieCommentsHelp = run('comments', '--help');
+assert.equal(movieCommentsHelp.status, 0);
+assert.doesNotMatch(movieCommentsHelp.stdout, /--latest/);
+
+const bookCommentsHelp = run('book', 'comments', '--help');
+assert.equal(bookCommentsHelp.status, 0);
+assert.doesNotMatch(bookCommentsHelp.stdout, /--latest/);
 
 const legacyHotHelp = run('book', 'hot', '--help');
 assert.equal(legacyHotHelp.status, 0);

@@ -9,12 +9,10 @@ import {
   getBookNotes,
   getBookRatingStats,
   getBookReviews,
-  getBooksByTag,
   getBookTop250,
   getLatestBooks,
   searchBooks,
-  type BookItem,
-  type BookTagSort
+  type BookItem
 } from '../api/book.js';
 import { withErrorHandler } from '../utils/error.js';
 import {
@@ -61,27 +59,6 @@ function renderBookList(items: BookItem[], heading: string, offset = 0): void {
       console.log(`    标签: ${item.tags.join(' / ')}`);
     }
   });
-}
-
-function parseBookTagSort(value: string): BookTagSort {
-  const normalized = value.trim().toLowerCase();
-  const mapping: Record<string, BookTagSort> = {
-    't': 'T',
-    '综合': 'T',
-    'hot': 'T',
-    'r': 'R',
-    '出版': 'R',
-    '出版日期': 'R',
-    'new': 'R',
-    'latest': 'R',
-    's': 'S',
-    '评价': 'S',
-    '评分': 'S',
-    'rating': 'S'
-  };
-  const sort = mapping[normalized];
-  if (!sort) throw new Error('--sort 仅支持：综合、出版、评价');
-  return sort;
 }
 
 async function resolveBookId(input: string, outputJson: boolean): Promise<string> {
@@ -187,31 +164,6 @@ export function registerBookCommands(program: Command): void {
     }));
 
   book
-    .command('tag <tag>')
-    .description('按标签浏览图书')
-    .option('-s, --start <n>', '起始偏移', '0')
-    .option('-n, --limit <n>', '返回数量', '20')
-    .option('--sort <sort>', '排序：综合、出版、评价', '综合')
-    .option('--json', '以 JSON 输出')
-    .action(withErrorHandler((args) => ({
-      command: 'book tag',
-      target: `标签: ${String(args[0])}`,
-      suggestion: '可尝试：douban book tag 科幻 --sort 评价'
-    }), async (tag, opts) => {
-      const start = parseNonNegativeInt(opts.start, '--start', 0);
-      const limit = parsePositiveInt(opts.limit, '--limit', 20);
-      const sort = parseBookTagSort(String(opts.sort));
-      const items = await withSpinner(
-        `正在获取“${tag}”标签图书...`,
-        () => getBooksByTag(tag, start, limit, sort),
-        !opts.json
-      );
-
-      if (opts.json) console.log(JSON.stringify(items, null, 2));
-      else renderBookList(items, `🏷️ 图书标签 · ${tag}`, start);
-    }));
-
-  book
     .command('search <keyword>')
     .description('按书名、作者或 ISBN 搜索')
     .option('-s, --start <n>', '起始偏移', '0')
@@ -314,8 +266,7 @@ export function registerBookCommands(program: Command): void {
 
   book
     .command('comments <query>')
-    .description('获取书籍短评')
-    .option('--latest', '按最新排序（默认按热门）')
+    .description('获取书籍热门短评')
     .option('-p, --page <n>', '页码（从 1 开始）', '1')
     .option('-n, --limit <n>', '每页数量', '20')
     .option('--json', '以 JSON 输出')
@@ -327,10 +278,9 @@ export function registerBookCommands(program: Command): void {
       const id = await resolveBookId(query, Boolean(opts.json));
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
       const page = parsePositiveInt(opts.page, '--page', 1);
-      const order = opts.latest ? 'latest' : 'hot';
 
       if (opts.json) {
-        const result = await getBookComments(id, order, pageToOffset(page, limit), limit);
+        const result = await getBookComments(id, 'hot', pageToOffset(page, limit), limit);
         console.log(JSON.stringify(result, null, 2));
         return;
       }
@@ -341,8 +291,8 @@ export function registerBookCommands(program: Command): void {
         fetchPage: async (currentPage) => {
           const start = pageToOffset(currentPage, limit);
           const result = await withSpinner(
-            `正在获取${opts.latest ? '最新' : '热门'}短评...`,
-            () => getBookComments(id, order, start, limit),
+            '正在获取热门短评...',
+            () => getBookComments(id, 'hot', start, limit),
             true
           );
           return { ...result, hasMore: start + result.items.length < result.total };
@@ -350,7 +300,7 @@ export function registerBookCommands(program: Command): void {
         renderPage: (items, currentPage, total) => {
           const start = pageToOffset(currentPage, limit);
           const { from, to } = getPageRange(currentPage, limit, items.length);
-          console.log(`\n💬 ${opts.latest ? '最新' : '热门'}短评 (${id})`);
+          console.log(`\n💬 热门短评 (${id})`);
           console.log(`共 ${(total || 0).toLocaleString()} 条，当前第 ${from}-${to} 条\n`);
           items.forEach((item, index) => {
             const stars = item.rating > 0 ? '⭐'.repeat(item.rating) : '';

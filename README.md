@@ -21,7 +21,7 @@ Unofficial Douban CLI for movies, TV shows, books, collections, and authenticate
 
 - 🎬 **电影与剧集发现**：热门、剧集标签、类型排行、电影 Top250、即将上映、一周口碑榜。
 - 🔎 **条目深度查询**：电影支持 ID 或片名；图书支持豆瓣 ID、ISBN 或关键词自动解析。
-- 📚 **完整图书链路**：图书 Top250、当前热门榜、新书速递、标签浏览、评分、短评、书评、读书笔记。
+- 📚 **完整图书链路**：图书 Top250、当前热门榜、新书速递、搜索、评分、短评、书评、读书笔记。
 - 🗂️ **用户收藏与导出**：查看公开的想看/在看/看过、想读/在读/读过，并导出书单或个人观影记录。
 - 🔐 **登录后账号操作**：标记、评分、短评、长评、关注、动态、观影统计；支持批量文件。
 - 🤖 **适合脚本化和 AI 分析**：多数命令支持 `--json`，个人影音记录可导出为结构化数据，错误也提供稳定的结构化输出。
@@ -38,7 +38,7 @@ douban movie "沙丘"
 # 找一本书并继续查看内容
 douban book search "三体"
 douban book info 9787536692930
-douban book comments 三体 --latest
+douban book comments 三体
 
 # 查看或导出公开收藏
 douban user USER_ID --wish
@@ -86,7 +86,7 @@ npx @marvae24/douban-cli hot
 | `douban search <keyword>` | 搜索电影 | `--start`、`--limit` |
 | `douban movie <id-or-title>` | 电影/剧集详情，可直接传 ID 或片名 | `--json` |
 | `douban rating <id>` | 评分分布、想看/看过统计和类型排名 | 只接受数字 ID |
-| `douban comments <id>` | 热门或最新短评 | `--latest`、`--page`、`--limit` |
+| `douban comments <id>` | 热门短评 | `--page`、`--limit` |
 | `douban reviews <id>` | 热门影评 | `--page`、`--limit` |
 
 类型排行支持：剧情、喜剧、动作、爱情、科幻、动画、悬疑、惊悚、恐怖、纪录片、短片、情色、同性、音乐、歌舞、家庭、儿童、传记、历史、战争、犯罪、西部、奇幻、冒险、灾难、武侠、古装、运动、黑色电影。
@@ -98,7 +98,7 @@ douban search "奥本海默" --start 20 --limit 20
 douban movie 35593344
 douban movie "沙丘"
 douban rating 1291546
-douban comments 1291546 --latest
+douban comments 1291546
 douban reviews 1291546 --limit 5
 ```
 
@@ -114,11 +114,10 @@ douban reviews 1291546 --limit 5
 | `douban book top250` | 豆瓣图书 Top250 | `--start`、`--limit` |
 | `douban book chart [category]` | 当前热门图书榜，最多 20 条 | `--limit` |
 | `douban book new [category]` | 新书速递，最多 20 条 | `--limit`；别名 `latest` |
-| `douban book tag <tag>` | 按标签浏览图书 | `--sort 综合/出版/评价`、`--start`、`--limit` |
 | `douban book search <keyword>` | 按书名、作者或 ISBN 搜索 | `--start`、`--limit` |
 | `douban book info <query>` | 图书完整详情 | ID、ISBN 或关键词 |
 | `douban book rating <query>` | 五星分布与想读/在读/读过统计 | ID、ISBN 或关键词 |
-| `douban book comments <query>` | 热门或最新短评 | `--latest`、`--page`、`--limit` |
+| `douban book comments <query>` | 热门短评 | `--page`、`--limit` |
 | `douban book reviews <query>` | 热门书评 | `--page`、`--limit` |
 | `douban book notes <query>` | 热门读书笔记 | `--page`、`--limit` |
 | `douban book user <userId>` | 公开的想读/在读/读过书单 | `--wish`、`--reading`、`--page`、`--limit` |
@@ -131,14 +130,13 @@ douban reviews 1291546 --limit 5
 douban book chart 小说 --limit 10
 douban book top250 --start 25 --limit 20
 douban book latest 科学新知
-douban book tag 科幻 --sort 评价 --limit 30
 
 # 搜索、详情与内容
 douban book search "三体" --limit 20
 douban book info 三体
 douban book info 9787536692930
 douban book rating 三体
-douban book comments 三体 --latest
+douban book comments 三体
 douban book reviews 三体 --limit 5
 douban book notes 三体 --limit 5
 
@@ -278,7 +276,7 @@ douban whoami --json
 
 按回车或 `n` 下一页，`p` 上一页，`g <页码>` 跳转，`q` 退出。已经访问过的页面会在本次会话中复用。
 
-使用 `--json`、管道或重定向时不会进入交互模式，只返回 `--page` 指定的页面。`search`、`book search`、`book top250` 和 `book tag` 使用 `--start` 偏移量，不使用交互分页。
+使用 `--json`、管道或重定向时不会进入交互模式，只返回 `--page` 指定的页面。`search`、`book search` 和 `book top250` 使用 `--start` 偏移量，不使用交互分页。
 
 ## 🛡️ 登录与隐私
 

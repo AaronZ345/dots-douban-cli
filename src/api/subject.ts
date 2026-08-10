@@ -1,5 +1,4 @@
 import { cleanText, fetchJson, isRecord, ResponseSchemaError } from './common.js';
-import { HttpRequestError } from './http/errors.js';
 import { debug } from '../utils/debug.js';
 
 export type SubjectKind = 'movie' | 'book';
@@ -115,15 +114,19 @@ export async function getSubjectReviews(
 
 /**
  * Get short comments for a movie or book from Douban's mobile API.
+ * The order parameter remains for compatibility and only accepts hot sorting.
  */
 export async function getSubjectComments(
   kind: SubjectKind,
   subjectId: string,
-  orderBy: 'hot' | 'latest' = 'hot',
+  orderBy: 'hot' = 'hot',
   start = 0,
   count = 20
 ): Promise<SubjectPaginatedResult<SubjectCommentItem>> {
   const id = normalizeSubjectId(subjectId, kind);
+  if ((orderBy as string) !== 'hot') {
+    throw new Error('短评目前仅支持热门排序');
+  }
   if (!Number.isInteger(start) || start < 0) throw new Error('start 必须是非负整数');
   if (!Number.isInteger(count) || count <= 0) return { items: [], total: 0 };
 
@@ -139,35 +142,11 @@ export async function getSubjectComments(
     };
   }
 
-  const url = `https://m.douban.com/rexxar/api/v2/${kind}/${id}/interests?count=${count}&start=${start}&order_by=${orderBy}`;
-  let rawData: unknown;
-  try {
-    rawData = await fetchJson<unknown>(
-      url,
-      { Referer: mobileReferer(kind, id) }
-    );
-  } catch (error) {
-    if (
-      orderBy === 'latest'
-      && error instanceof HttpRequestError
-      && error.code === 'HTTP_STATUS'
-      && error.status === 403
-    ) {
-      throw new HttpRequestError(
-        '豆瓣暂时拒绝最新短评请求；可去掉 --latest 查看热门短评，CLI 不会自动改变排序',
-        {
-          code: error.code,
-          url: error.url,
-          status: error.status,
-          attempts: error.attempts,
-          retryable: error.retryable,
-          responseSnippet: error.responseSnippet,
-          cause: error
-        }
-      );
-    }
-    throw error;
-  }
+  const url = `https://m.douban.com/rexxar/api/v2/${kind}/${id}/interests?count=${count}&start=${start}&order_by=hot`;
+  const rawData = await fetchJson<unknown>(
+    url,
+    { Referer: mobileReferer(kind, id) }
+  );
   if (!isRecord(rawData) || !Array.isArray(rawData.interests)) {
     throw new ResponseSchemaError('短评接口返回格式异常', url);
   }

@@ -12,7 +12,6 @@ import {
   parseBookDetailHtml,
   parseBookMediaList,
   parseBookSearchPage,
-  parseBookSubjectList,
   parseBookTop250Page,
   type ParsedBookDetail
 } from './book-parsers.js';
@@ -110,8 +109,6 @@ type BookCategory = keyof typeof BOOK_CHART_CATEGORIES;
 
 export const BOOK_LATEST_CATEGORIES = Object.freeze(Object.keys(BOOK_CHART_CATEGORIES) as BookCategory[]);
 
-export type BookTagSort = 'T' | 'R' | 'S';
-
 export const BOOK_CHART_PAGE_LIMIT = 20;
 
 function isBookCategory(value: string): value is BookCategory {
@@ -148,17 +145,6 @@ function normalizeScalar(value: unknown): string {
 function normalizeCount(value: unknown): number {
   const count = Number(value);
   return Number.isFinite(count) && count >= 0 ? Math.trunc(count) : 0;
-}
-
-function parseNextStart(html: string, baseUrl: string): number | null {
-  const nextMatch = html.match(/<span[^>]*class=["'][^"']*\bnext\b[^"']*["'][^>]*>[\s\S]*?<a[^>]*href=["']([^"']+)["']/i);
-  if (!nextMatch?.[1]) return null;
-  try {
-    const nextStart = Number(new URL(nextMatch[1].replace(/&amp;/g, '&'), baseUrl).searchParams.get('start'));
-    return Number.isInteger(nextStart) && nextStart >= 0 ? nextStart : null;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -247,55 +233,6 @@ export async function getLatestBooks(category = '全部', limit = 20): Promise<B
     throw new ResponseSchemaError('新书速递页面未解析出预期条目', `${BOOK_BASE}/latest${query}`);
   }
   return items.slice(0, limit);
-}
-
-/**
- * Browse books by tag. Sort: T=relevance, R=publication date, S=rating.
- */
-export async function getBooksByTag(
-  tag: string,
-  start = 0,
-  limit = 20,
-  sort: BookTagSort = 'T'
-): Promise<BookItem[]> {
-  const normalizedTag = tag.trim();
-  if (!normalizedTag) return [];
-  if (!Number.isInteger(start) || start < 0) throw new Error('start 必须是非负整数');
-  if (!Number.isInteger(limit) || limit <= 0) return [];
-
-  const results: BookItem[] = [];
-  let pageStart = start;
-  const seen = new Set<string>();
-
-  while (results.length < limit) {
-    const url = `${BOOK_BASE}/tag/${encodeURIComponent(normalizedTag)}?start=${pageStart}&type=${sort}`;
-    const html = await fetchHtml(url, { Referer: BOOK_BASE });
-    if (isChallengePage(html)) throw new Error('图书标签页面触发了反爬挑战，暂时无法解析');
-
-    const pageItems = parseBookSubjectList(html);
-    if (pageItems.length === 0) {
-      const explicitEmpty = /没有找到|暂无相关|subject-list[^>]*>\s*<\/ul>/i.test(html);
-      if (!explicitEmpty && pageStart === start) {
-        throw new ResponseSchemaError('图书标签页面未解析出预期条目', url);
-      }
-      break;
-    }
-    for (const item of pageItems) {
-      if (!item.id || seen.has(item.id)) continue;
-      seen.add(item.id);
-      results.push(item);
-      if (results.length >= limit) break;
-    }
-    const nextStart = parseNextStart(html, url);
-    if (nextStart === null) break;
-    if (nextStart <= pageStart) throw new ResponseSchemaError('图书标签分页游标没有前进', url);
-    if (pageItems.length < 20) {
-      throw new ResponseSchemaError('图书标签页声明存在下一页，但当前页解析不完整', url);
-    }
-    pageStart = nextStart;
-  }
-
-  return results.slice(0, limit);
 }
 
 async function searchBookSuggestions(keyword: string, limit: number): Promise<BookSearchItem[]> {
@@ -524,7 +461,7 @@ export async function getBookInfo(id: string): Promise<BookDetail> {
 
 export function getBookComments(
   bookId: string,
-  orderBy: 'hot' | 'latest' = 'hot',
+  orderBy: 'hot' = 'hot',
   start = 0,
   count = 20
 ): Promise<SubjectPaginatedResult<BookCommentItem>> {
