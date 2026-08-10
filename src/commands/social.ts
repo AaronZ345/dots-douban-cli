@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Command } from 'commander';
 import { ensureAuth, type VerifiedAuthSession } from '../auth.js';
-import { getCollectionRecords, getFeed } from '../api/account.js';
+import { getCollectionRecords } from '../api/account.js';
 import { createReview, followUser, unfollowUser } from '../api/mutations.js';
 import { secureAtomicWriteFile } from '../storage/secure-file.js';
 import { withErrorHandler } from '../utils/error.js';
@@ -159,43 +159,6 @@ export function registerSocialCommands(program: Command): void {
       console.log('\n✅ 长评发布成功');
       console.log(`reviewId: ${result.id || '-'}`);
       console.log(`链接: ${result.url}`);
-    }));
-
-  program
-    .command('feed')
-    .helpGroup('收藏与账号:')
-    .description('查看关注动态/时间线 [需登录]')
-    .option('-n, --limit <n>', '返回数量', '20')
-    .option('--json', '以 JSON 输出')
-    .action(withErrorHandler({
-      command: 'feed',
-      suggestion: '可尝试：douban feed -n 10'
-    }, async (opts) => {
-      const limit = parsePositiveInt(opts.limit, '--limit', 20);
-      const auth = await withSpinner('正在检查登录状态...', () => ensureAuth(), !opts.json);
-      const items = await withSpinner(
-        '正在获取时间线...',
-        () => getFeed(auth.cookies, limit),
-        !opts.json
-      );
-
-      if (opts.json) {
-        console.log(JSON.stringify(items, null, 2));
-        return;
-      }
-
-      if (items.length === 0) {
-        console.log('暂无动态。');
-        return;
-      }
-
-      console.log('\n📰 关注动态\n');
-      items.forEach((item, index) => {
-        console.log(`${String(index + 1).padStart(2)}. ${item.user} ${item.action}`);
-        if (item.target && item.target !== '-') console.log(`    ${item.target}`);
-        if (item.content) console.log(`    ${item.content}`);
-        if (item.time) console.log(`    ${item.time}`);
-      });
     }));
 
   program

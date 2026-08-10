@@ -44,6 +44,7 @@ for (const bookCommand of [
 assert.doesNotMatch(bookSection, /^\s+book\s{2,}/m);
 assert.doesNotMatch(rootHelp.stdout, /图书功能:/);
 assert.doesNotMatch(rootHelp.stdout, /book tag/);
+assert.doesNotMatch(rootHelp.stdout, /\bfeed\b/);
 assert.equal(rootHelp.stderr, '');
 
 const bookHelp = run('book', '--help');

@@ -12,8 +12,7 @@ vi.mock('../auth.js', () => ({
   ensureAuth: mocks.ensureAuth
 }));
 vi.mock('../api/account.js', () => ({
-  getCollectionRecords: mocks.getCollectionRecords,
-  getFeed: vi.fn()
+  getCollectionRecords: mocks.getCollectionRecords
 }));
 vi.mock('../api/mutations.js', () => ({
   createReview: vi.fn(),

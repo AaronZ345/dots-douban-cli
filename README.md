@@ -11,7 +11,7 @@ Unofficial Douban CLI for movies, TV shows, books, collections, and authenticate
 
 `douban-cli` 不只是一个搜索命令：它覆盖影视发现、Top250 与口碑榜、电影和图书详情、评分分布、短评/长评/读书笔记、公开片单与书单、交互翻页、JSON 输出、批量标记和数据导出。
 
-> 公开电影、图书、豆列和用户收藏查询无需登录。只有账号身份、关注动态、电影标记/评分/评论、个人统计与私有导出需要显式运行 `douban login`。
+> 公开电影、图书、豆列和用户收藏查询无需登录。只有账号身份、电影标记/评分/评论、个人统计与私有导出需要显式运行 `douban login`。
 >
 > 当前登录后的写操作仅支持电影；图书功能为公开查询、阅读内容和公开书单导出。
 
@@ -23,7 +23,7 @@ Unofficial Douban CLI for movies, TV shows, books, collections, and authenticate
 - 🔎 **条目深度查询**：电影支持 ID 或片名；图书支持豆瓣 ID、ISBN 或关键词自动解析。
 - 📚 **完整图书链路**：图书 Top250、当前热门榜、新书速递、搜索、评分、短评、书评、读书笔记。
 - 🗂️ **用户收藏与导出**：查看公开的想看/在看/看过、想读/在读/读过，并导出书单或个人观影记录。
-- 🔐 **登录后账号操作**：标记、评分、短评、长评、关注、动态、观影统计；支持批量文件。
+- 🔐 **登录后账号操作**：标记、评分、短评、长评、关注和观影统计；支持批量文件。
 - 🤖 **适合脚本化和 AI 分析**：多数命令支持 `--json`，个人影音记录可导出为结构化数据，错误也提供稳定的结构化输出。
 - ⌨️ **终端友好**：表格输出、加载状态、交互翻页、已访问页面缓存，以及 partial result warning。
 
@@ -208,10 +208,9 @@ douban review 1292052 "标题" --file review.md
 
 `rate` 和 `comment` 会按“看过”状态提交。`mark` 的 `--wish`、`--watched`、`--watching` 三种状态必须且只能选择一个。
 
-### 动态、统计、导出与关注
+### 统计、导出与关注
 
 ```bash
-douban feed --limit 10
 douban stats --year 2026 --limit 30 --delay 2
 douban export --format json -o douban-export.json
 douban export --format csv -o douban-export.csv

@@ -16,15 +16,6 @@ export interface CurrentUserProfile {
   url: string;
 }
 
-export interface FeedItem {
-  user: string;
-  action: string;
-  target: string;
-  content: string;
-  time: string;
-  url: string;
-}
-
 export interface CollectionRecord {
   id: string;
   title: string;
@@ -130,42 +121,6 @@ export async function getCurrentUserProfile(cookies: string): Promise<CurrentUse
   } catch {
     throw new Error('无法识别当前登录用户，请重新登录后重试');
   }
-}
-
-export async function getFeed(cookies: string, limit = 20): Promise<FeedItem[]> {
-  if (!Number.isFinite(limit) || limit <= 0) return [];
-
-  const html = await fetchHtml('https://www.douban.com/', {
-    Referer: 'https://www.douban.com/',
-    Cookie: cookies
-  });
-
-  const results: FeedItem[] = [];
-  const blockRegex = /<div class="status-item[\s\S]*?<\/div>\s*<\/div>/g;
-
-  let match: RegExpExecArray | null;
-  while ((match = blockRegex.exec(html)) !== null && results.length < limit) {
-    const block = match[0];
-
-    const userMatch = block.match(/class="name"[^>]*>\s*<a[^>]*>([\s\S]*?)<\/a>/i);
-    const actionMatch = block.match(/class="action"[^>]*>([\s\S]*?)<\/span>/i);
-    const targetMatch = block.match(/class="title"[^>]*>\s*<a[^>]*>([\s\S]*?)<\/a>/i);
-    const contentMatch = block.match(/class="status-saying"[^>]*>([\s\S]*?)<\/blockquote>/i)
-      || block.match(/class="status-content"[^>]*>([\s\S]*?)<\/div>/i);
-    const timeMatch = block.match(/class="created_at"[^>]*>([\s\S]*?)<\/span>/i);
-    const urlMatch = block.match(/href="(https:\/\/www\.douban\.com\/people\/[^"#]+\/status\/\d+)"/i);
-
-    results.push({
-      user: cleanText(userMatch?.[1] || '未知用户'),
-      action: cleanText(actionMatch?.[1] || '更新了动态'),
-      target: cleanText(targetMatch?.[1] || '-'),
-      content: cleanText(contentMatch?.[1] || ''),
-      time: cleanText(timeMatch?.[1] || ''),
-      url: urlMatch?.[1] || ''
-    });
-  }
-
-  return results;
 }
 
 export async function getCollectionRecords(

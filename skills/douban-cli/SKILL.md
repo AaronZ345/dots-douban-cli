@@ -1,6 +1,6 @@
 ---
 name: douban-cli
-description: "当用户明确要求以豆瓣为数据源，或明确要求使用 douban CLI 时，用于查询和筛选电影、剧集、图书、Top250、热门榜、上映计划、评分、短评、影评、书评、读书笔记、豆列与用户收藏；也用于登录后管理电影想看/在看/看过、评分、短评、长评、关注、动态、统计、批量操作和导出。普通影视图书推荐，以及未指定豆瓣来源的评分查询或账号操作不触发。"
+description: "当用户明确要求以豆瓣为数据源，或明确要求使用 douban CLI 时，用于查询和筛选电影、剧集、图书、Top250、热门榜、上映计划、评分、短评、影评、书评、读书笔记、豆列与用户收藏；也用于登录后管理电影想看/在看/看过、评分、短评、长评、关注、统计、批量操作和导出。普通影视图书推荐，以及未指定豆瓣来源的评分查询或账号操作不触发。"
 ---
 
 # douban-cli 操作手册
@@ -36,7 +36,7 @@ description: "当用户明确要求以豆瓣为数据源，或明确要求使用
 | 查看公开片单、书单或热门豆列 | `user`、`book user`、`list` |
 | 导出公开书单 | `book export` |
 | 管理当前账号电影记录 | `login` 后使用 `mark`、`rate`、`comment`、`review`、`unmark` |
-| 查看自己的动态、统计或导出 | `feed`、`stats`、`export` |
+| 查看自己的观影统计或导出 | `stats`、`export` |
 
 ## 电影与剧集命令
 
@@ -112,7 +112,6 @@ douban book export USER_ID --reading -f csv -o reading.csv
 | `douban login [--open] [--browser <name>] [--profile <profile>] [--cookie-timeout <seconds>]` | 从本机浏览器提取豆瓣登录态；仅传入 `--open` 时打开当前账号页；Cookie/钥匙串默认等待 60 秒 |
 | `douban whoami` | 查看缓存登录账号和来源 |
 | `douban logout` | 删除本地登录缓存，不退出浏览器账号 |
-| `douban feed [-n <limit>]` | 查看关注动态 |
 | `douban stats [-y <year>] [-n <limit>] [--delay <seconds>]` | 观影总数、月份分布和平均分；可限制读取量并控制分页间隔 |
 | `douban export -o <path> [-f json|csv] [-n <limit>] [--delay <seconds>]` | 导出当前账号的电影看过/想看/在看记录 |
 | `douban follow <userId> [--delay <seconds>]` | 关注用户 |
@@ -160,7 +159,7 @@ douban comment --file comments.tsv
 - 交互分页只用于：`top250`、电影 `comments`、电影 `reviews`、电影 `user`、`book comments`、`book reviews`、`book notes`、`book user`。
 - 交互键：回车或 `n` 下一页，`p` 上一页，`g <页码>` 跳转，`q` 退出。
 - `--json`、管道或重定向只返回指定页，不进入交互模式。
-- 电影/图书搜索、图书 Top250 和图书标签使用 `--start` 偏移量。
+- 电影/图书搜索和图书 Top250 使用 `--start` 偏移量。
 - 结果携带 warning 或 `partial` 时，不要把它描述成完整结果。
 
 ## 登录、写操作与隐私
