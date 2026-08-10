@@ -17,7 +17,9 @@ jobs:
         with:
           node-version: '22'
 
-      - run: npm install -g npm@latest
+      - run: npm install -g npm@11.6.2
       - run: npm ci
-      - run: npm run build
+      - run: npm run verify
+      - name: Verify release tag matches package version
+        run: node -e "const version=require('./package.json').version; const expected='v'+version; if(process.env.GITHUB_REF_NAME!==expected){console.error('Expected release tag '+expected+', got '+process.env.GITHUB_REF_NAME); process.exit(1)}"
       - run: npm publish --registry https://registry.npmjs.org

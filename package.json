@@ -1,7 +1,7 @@
 {
   "name": "@marvae24/douban-cli",
   "version": "0.3.0",
-  "description": "Douban CLI - browse movies, TV shows, search from terminal | 豆瓣命令行工具",
+  "description": "Douban CLI - browse movies, TV shows, books, reviews, and collections from the terminal | 豆瓣命令行工具",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -9,11 +9,14 @@
   },
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "postbuild": "chmod +x dist/index.js",
-    "ensure-bin-permission": "chmod +x dist/index.js",
     "lint": "eslint src",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:cli": "node scripts/smoke-cli.mjs",
+    "verify": "npm run lint && npm run typecheck && npm test && npm run build && npm run test:cli",
+    "prepack": "npm run verify"
   },
   "keywords": [
     "douban",
@@ -43,12 +46,12 @@
     "commander": "^14.0.0"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "@typescript-eslint/eslint-plugin": "^8.57.1",
-    "@typescript-eslint/parser": "^8.57.1",
+    "@types/node": "^22.20.1",
+    "@typescript-eslint/eslint-plugin": "^8.66.0",
+    "@typescript-eslint/parser": "^8.66.0",
     "eslint": "^8.57.1",
     "typescript": "^5.0.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.10"
   },
   "files": [
     "dist",
