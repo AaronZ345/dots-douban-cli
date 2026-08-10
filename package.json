@@ -1,6 +1,6 @@
 {
   "name": "@marvae24/douban-cli",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Douban CLI - browse movies, TV shows, books, reviews, and collections from the terminal | 豆瓣命令行工具",
   "type": "module",
   "main": "dist/index.js",
