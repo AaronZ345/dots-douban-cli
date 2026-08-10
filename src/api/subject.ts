@@ -1,4 +1,5 @@
 import { cleanText, fetchJson, isRecord, ResponseSchemaError } from './common.js';
+import { HttpRequestError } from './http/errors.js';
 import { debug } from '../utils/debug.js';
 
 export type SubjectKind = 'movie' | 'book';
@@ -139,10 +140,34 @@ export async function getSubjectComments(
   }
 
   const url = `https://m.douban.com/rexxar/api/v2/${kind}/${id}/interests?count=${count}&start=${start}&order_by=${orderBy}`;
-  const rawData = await fetchJson<unknown>(
-    url,
-    { Referer: mobileReferer(kind, id) }
-  );
+  let rawData: unknown;
+  try {
+    rawData = await fetchJson<unknown>(
+      url,
+      { Referer: mobileReferer(kind, id) }
+    );
+  } catch (error) {
+    if (
+      orderBy === 'latest'
+      && error instanceof HttpRequestError
+      && error.code === 'HTTP_STATUS'
+      && error.status === 403
+    ) {
+      throw new HttpRequestError(
+        '豆瓣暂时拒绝最新短评请求；可去掉 --latest 查看热门短评，CLI 不会自动改变排序',
+        {
+          code: error.code,
+          url: error.url,
+          status: error.status,
+          attempts: error.attempts,
+          retryable: error.retryable,
+          responseSnippet: error.responseSnippet,
+          cause: error
+        }
+      );
+    }
+    throw error;
+  }
   if (!isRecord(rawData) || !Array.isArray(rawData.interests)) {
     throw new ResponseSchemaError('短评接口返回格式异常', url);
   }

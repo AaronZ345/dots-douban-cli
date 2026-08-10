@@ -154,6 +154,23 @@ describe('partial rating and collection data', () => {
     await expect(getSubjectComments('movie', '123')).rejects.toMatchObject({ code: 'SCHEMA_MISMATCH' });
   });
 
+  it('reports a rejected latest-comments request without silently falling back to hot comments', async () => {
+    const requested: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      requested.push(String(input));
+      return htmlResponse('forbidden', 403);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getSubjectComments('movie', '123', 'latest', 0, 1)).rejects.toMatchObject({
+      code: 'HTTP_STATUS',
+      status: 403,
+      message: expect.stringContaining('不会自动改变排序')
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(requested[0]).toContain('order_by=latest');
+  });
+
   it('returns subject rating data when the distribution endpoint fails', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
       const url = String(input);

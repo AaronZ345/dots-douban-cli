@@ -76,4 +76,20 @@ describe('utils/error', () => {
     const payload = JSON.parse(String(stderr.mock.calls[0]?.[0]));
     expect(payload.error.code).toBe('NOT_FOUND');
   });
+
+  it('does not treat an endpoint-specific 403 as a missing login', async () => {
+    process.argv = ['node', 'douban', 'comments', '123', '--latest', '--json'];
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const action = withErrorHandler({ command: 'comments' }, async () => {
+      const error = new Error('HTTP 403 for latest comments') as Error & { code: string; status: number };
+      error.code = 'HTTP_STATUS';
+      error.status = 403;
+      throw error;
+    });
+
+    await action();
+
+    const payload = JSON.parse(String(stderr.mock.calls[0]?.[0]));
+    expect(payload.error.code).toBe('HTTP_ERROR');
+  });
 });

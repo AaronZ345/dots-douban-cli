@@ -322,7 +322,7 @@ export function registerBookCommands(program: Command): void {
     .action(withErrorHandler((args) => ({
       command: 'book comments',
       target: `书籍: ${String(args[0])}`,
-      suggestion: '可尝试：douban book comments 三体 --latest'
+      suggestion: '可尝试：douban book comments 三体'
     }), async (query, opts) => {
       const id = await resolveBookId(query, Boolean(opts.json));
       const limit = parsePositiveInt(opts.limit, '--limit', 20);

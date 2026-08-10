@@ -57,7 +57,7 @@ function classifyError(error: unknown, message: string): CliErrorCode {
   if (structuredCode === 'NETWORK') return 'NETWORK_ERROR';
   if (structuredCode === 'AUTH_REQUIRED') return 'AUTH_REQUIRED';
   if (structuredCode === 'HTTP_STATUS') {
-    if (structuredStatus === 401 || structuredStatus === 403) return 'AUTH_REQUIRED';
+    if (structuredStatus === 401) return 'AUTH_REQUIRED';
     if (structuredStatus === 404) return 'NOT_FOUND';
     return 'HTTP_ERROR';
   }
@@ -77,7 +77,6 @@ function classifyError(error: unknown, message: string): CliErrorCode {
   }
   if (
     normalized.includes('http 401') ||
-    normalized.includes('http 403') ||
     normalized.includes('cookie') ||
     normalized.includes('login') ||
     message.includes('登录') ||

@@ -623,7 +623,7 @@ export function registerMovieCommands(program: Command): void {
     .action(withErrorHandler((args) => ({
       command: 'comments',
       target: `ID: ${String(args[0] || '未指定')}`,
-      suggestion: '可尝试：douban comments 1292052 --page 2'
+      suggestion: '可尝试：douban comments 1292052'
     }), async (movieId, opts) => {
       const id = normalizeMovieIdInput(movieId);
       const orderBy = opts.latest ? 'latest' : 'hot';
