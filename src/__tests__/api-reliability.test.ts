@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getBookChart, getLatestBooks, searchBooks } from '../api/book.ts';
 import { getUserCollectionPage } from '../api/collection.ts';
-import { getMovieDetail, getNowPlaying } from '../api/movie.ts';
+import { getMovieDetail } from '../api/movie.ts';
 import { searchMovies } from '../api/search.ts';
 import { getSubjectComments, getSubjectRatingStats, getSubjectReviews } from '../api/subject.ts';
 
@@ -102,15 +102,6 @@ describe('movie source orchestration', () => {
     expect(requested.some((url) => url.includes('/rexxar/api/v2/tv/'))).toBe(false);
   });
 
-  it('splits now-playing actors on slash separators', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => htmlResponse(`
-      <li class="list-item" data-subject="123" data-title="测试" data-score="8.0"
-        data-director="导演" data-actors="演员甲 / 演员乙 / 演员丙" data-duration="120分钟"
-        data-region="中国" data-release="2026" data-votecount="10" data-wish="20">`)));
-
-    const items = await getNowPlaying('beijing');
-    expect(items[0].actors).toEqual(['演员甲', '演员乙', '演员丙']);
-  });
 });
 
 describe('partial rating and collection data', () => {

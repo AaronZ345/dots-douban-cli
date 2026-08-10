@@ -9,7 +9,7 @@ Unofficial Douban CLI for movies, TV shows, books, collections, and authenticate
 
 在终端里浏览豆瓣电影、剧集、图书和用户收藏，也可以登录后管理自己的电影记录。
 
-`douban-cli` 不只是一个搜索命令：它覆盖影视发现、Top250、热映与口碑榜、电影和图书详情、评分分布、短评/长评/读书笔记、公开片单与书单、交互翻页、JSON 输出、批量标记和数据导出。
+`douban-cli` 不只是一个搜索命令：它覆盖影视发现、Top250 与口碑榜、电影和图书详情、评分分布、短评/长评/读书笔记、公开片单与书单、交互翻页、JSON 输出、批量标记和数据导出。
 
 > 公开电影、图书、豆列和用户收藏查询无需登录。只有账号身份、关注动态、电影标记/评分/评论、个人统计与私有导出需要显式运行 `douban login`。
 >
@@ -19,7 +19,7 @@ Unofficial Douban CLI for movies, TV shows, books, collections, and authenticate
 
 ## ✨ 功能亮点
 
-- 🎬 **电影与剧集发现**：热门、剧集标签、类型排行、电影 Top250、正在热映、即将上映、一周口碑榜。
+- 🎬 **电影与剧集发现**：热门、剧集标签、类型排行、电影 Top250、即将上映、一周口碑榜。
 - 🔎 **条目深度查询**：电影支持 ID 或片名；图书支持豆瓣 ID、ISBN 或关键词自动解析。
 - 📚 **完整图书链路**：图书 Top250、当前热门榜、新书速递、标签浏览、评分、短评、书评、读书笔记。
 - 🗂️ **用户收藏与导出**：查看公开的想看/在看/看过、想读/在读/读过，并导出书单或个人观影记录。
@@ -81,7 +81,6 @@ npx @marvae24/douban-cli hot
 | `douban tv <tag>` | 按标签查看剧集 | `热门/美剧/英剧/日剧/韩剧/国产剧/综艺/最新` |
 | `douban rank <genre>` | 按类型查看高分电影 | `--limit` |
 | `douban top250` | 豆瓣电影 Top250，每页 25 条 | `--page`，支持交互翻页 |
-| `douban now` | 指定城市正在热映，城市使用拼音 | `--city`、`--limit` |
 | `douban coming` | 即将上映 | `--limit` |
 | `douban weekly` | 一周口碑榜与排名趋势 | `--limit` |
 | `douban search <keyword>` | 搜索电影 | `--start`、`--limit` |
@@ -95,7 +94,6 @@ npx @marvae24/douban-cli hot
 ```bash
 douban hot --tv --tag 英剧 --limit 10
 douban top250 --page 2
-douban now --city shanghai
 douban search "奥本海默" --start 20 --limit 20
 douban movie 35593344
 douban movie "沙丘"

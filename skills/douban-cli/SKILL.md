@@ -1,6 +1,6 @@
 ---
 name: douban-cli
-description: "当用户明确要求以豆瓣为数据源，或明确要求使用 douban CLI 时，用于查询和筛选电影、剧集、图书、Top250、热门榜、热映、上映计划、评分、短评、影评、书评、读书笔记、豆列与用户收藏；也用于登录后管理电影想看/在看/看过、评分、短评、长评、关注、动态、统计、批量操作和导出。普通影视图书推荐，以及未指定豆瓣来源的评分查询或账号操作不触发。"
+description: "当用户明确要求以豆瓣为数据源，或明确要求使用 douban CLI 时，用于查询和筛选电影、剧集、图书、Top250、热门榜、上映计划、评分、短评、影评、书评、读书笔记、豆列与用户收藏；也用于登录后管理电影想看/在看/看过、评分、短评、长评、关注、动态、统计、批量操作和导出。普通影视图书推荐，以及未指定豆瓣来源的评分查询或账号操作不触发。"
 ---
 
 # douban-cli 操作手册
@@ -29,7 +29,7 @@ description: "当用户明确要求以豆瓣为数据源，或明确要求使用
 | 用户要做什么 | 首选命令 |
 |---|---|
 | 找热门电影、剧集或类型高分片 | `hot`、`tv`、`rank` |
-| 查 Top250、热映、待上映或口碑榜 | `top250`、`now`、`coming`、`weekly` |
+| 查 Top250、待上映或口碑榜 | `top250`、`coming`、`weekly` |
 | 搜索电影并查看详情、评分或评论 | `search` → `movie` / `rating` / `comments` / `reviews` |
 | 找热门、新书、Top250 或标签图书 | `book chart`、`book new`、`book top250`、`book tag` |
 | 搜索图书并查看详情或阅读内容 | `book search` → `book info` / `rating` / `comments` / `reviews` / `notes` |
@@ -48,7 +48,6 @@ description: "当用户明确要求以豆瓣为数据源，或明确要求使用
 | `douban tv <tag> [-n <limit>]` | 按上述标签查看剧集 |
 | `douban rank <genre> [-n <limit>]` | 按电影类型查看高分排行 |
 | `douban top250 [-p <page>]` | 电影 Top250，每页 25 条，支持交互翻页 |
-| `douban now [-c <slug>] [-n <limit>]` | 指定城市正在热映；城市使用拼音，默认 `beijing` |
 | `douban coming [-n <limit>]` | 即将上映，默认 20 条 |
 | `douban weekly [-n <limit>]` | 一周口碑榜，默认 10 条 |
 | `douban search <keyword> [-s <start>] [-n <limit>]` | 搜索电影，使用偏移量分页 |

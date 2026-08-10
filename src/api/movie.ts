@@ -527,68 +527,6 @@ export async function getTop250(start = 0, limit = 25): Promise<Top250Item[]> {
 }
 
 /**
- * Get now playing movies
- */
-export interface NowPlayingItem {
-  id: string;
-  title: string;
-  score: string;
-  director: string;
-  actors: string[];
-  duration: string;
-  region: string;
-  release_date: string;
-  vote_count: number;
-  wish_count: number;
-}
-
-export async function getNowPlaying(city = 'beijing'): Promise<NowPlayingItem[]> {
-  const url = `${BASE}/cinema/nowplaying/${city}/`;
-  const html = await fetchHtml(url);
-  if (isChallengePage(html)) throw new Error('正在上映页面触发了反爬挑战，暂时无法解析');
-  const results: NowPlayingItem[] = [];
-
-  // Match the whole <li> tag to extract all data-* attributes
-  const itemRegex = /<li[^>]*class="list-item"[^>]*data-[^>]+>/g;
-  const readAttr = (tag: string, key: string): string => {
-    const m = tag.match(new RegExp(`data-${key}="([^"]*)"`));
-    return m ? cleanText(m[1]) : '';
-  };
-
-  let match;
-  while ((match = itemRegex.exec(html)) !== null) {
-    const tag = match[0];
-    const id = readAttr(tag, 'subject');
-    const title = normalizeTitle(readAttr(tag, 'title'));
-    if (!id || !title) continue;
-
-    const actors = readAttr(tag, 'actors')
-      .split(/\s*[/／，,]\s*/)
-      .map((s) => cleanText(s))
-      .filter(Boolean);
-    const voteStr = readAttr(tag, 'votecount').replace(/\D/g, '');
-    const wishStr = readAttr(tag, 'wish').replace(/\D/g, '');
-
-    results.push({
-      id,
-      title,
-      score: readAttr(tag, 'score') || '-',
-      director: readAttr(tag, 'director') || '-',
-      actors,
-      duration: readAttr(tag, 'duration') || '-',
-      region: readAttr(tag, 'region') || '-',
-      release_date: readAttr(tag, 'release') || '-',
-      vote_count: voteStr ? Number(voteStr) : 0,
-      wish_count: wishStr ? Number(wishStr) : 0
-    });
-  }
-  if (results.length === 0 && !/暂无|没有正在上映/.test(html)) {
-    throw new ResponseSchemaError('正在上映页面未解析出预期条目', url);
-  }
-  return results;
-}
-
-/**
  * Get coming soon movies from https://movie.douban.com/coming
  */
 export async function getComing(limit = 20): Promise<ComingItem[]> {

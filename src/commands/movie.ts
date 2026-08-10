@@ -5,7 +5,6 @@ import {
   getComments,
   getHot,
   getMovieDetail,
-  getNowPlaying,
   getRank,
   getRatingStats,
   getReviews,
@@ -321,51 +320,6 @@ export function registerMovieCommands(program: Command): void {
           }
         }
       });
-    }));
-
-  program
-    .command('now')
-    .description('获取正在热映电影')
-    .option('-c, --city <slug>', '城市拼音（如 beijing、shanghai）', 'beijing')
-    .option('-n, --limit <n>', '返回数量')
-    .option('--json', '以 JSON 输出')
-    .action(withErrorHandler((args) => ({
-      command: 'now',
-      target: `城市: ${String((args[0] as { city?: string }).city ?? '')}`,
-      suggestion: '可尝试：douban now -c shanghai'
-    }), async (opts) => {
-      const citySlug = String(opts.city || '').trim().toLowerCase();
-      if (!/^[a-z0-9-]+$/.test(citySlug)) {
-        throw new Error('城市必须使用拼音，例如 beijing 或 shanghai');
-      }
-      let items = await withSpinner(
-        `正在获取 ${citySlug} 热映电影...`,
-        () => getNowPlaying(citySlug),
-        !opts.json
-      );
-
-      if (opts.limit) {
-        const limit = parsePositiveInt(opts.limit, '--limit', items.length);
-        items = items.slice(0, limit);
-      }
-
-      if (opts.json) {
-        console.log(JSON.stringify(items, null, 2));
-      } else {
-        console.log(`\n🎬 ${citySlug} 正在热映\n`);
-        renderTable(items, [
-          { header: '#', value: (_, i) => String(i + 1), minWidth: 2 },
-          { header: '片名', value: (item) => item.title, minWidth: 14 },
-          { header: '评分', value: (item) => {
-            const score = item.score && item.score !== '0' && item.score !== '-' ? item.score : '-';
-            const count = item.vote_count > 0 ? (item.vote_count > 10000 ? `${(item.vote_count / 10000).toFixed(1)}万` : String(item.vote_count)) : '';
-            return count ? `${score} (${count})` : score;
-          }, minWidth: 10 },
-          { header: '导演', value: (item) => item.director || '-', minWidth: 8 },
-          { header: '时长', value: (item) => item.duration || '-', minWidth: 6 },
-          { header: '地区', value: (item) => item.region || '-', minWidth: 6 }
-        ]);
-      }
     }));
 
   program
