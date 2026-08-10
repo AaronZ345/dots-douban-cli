@@ -17,7 +17,14 @@ import {
   type BookTagSort
 } from '../api/book.js';
 import { withErrorHandler } from '../utils/error.js';
-import { isNumericId, parseNonNegativeInt, parsePositiveInt } from '../utils/parsing.js';
+import {
+  getPageRange,
+  isNumericId,
+  pageToOffset,
+  parseNonNegativeInt,
+  parsePositiveInt,
+  parsePositiveIntAtMost
+} from '../utils/parsing.js';
 import { withPagination } from '../utils/pagination.js';
 import { withSpinner } from '../utils/spinner.js';
 import { registerBookCollectionCommands } from './book-collection.js';
@@ -129,12 +136,11 @@ function registerTop250Command(book: Command, name: 'hot' | 'top250'): void {
 export function registerBookCommands(program: Command): void {
   const book = program
     .command('book')
-    .description('豆瓣书籍：榜单、搜索、详情、评分与书评');
+    .helpGroup('书籍:')
+    .description('豆瓣书籍：榜单、搜索、详情、评分、短评、书评、笔记与收藏');
 
   registerTop250Command(book, 'hot');
   registerTop250Command(book, 'top250');
-  registerBookCollectionCommands(book);
-
   book
     .command('chart [category]')
     .description('获取当前热门图书榜')
@@ -146,7 +152,7 @@ export function registerBookCommands(program: Command): void {
       options: `分类：${Object.keys(BOOK_CHART_CATEGORIES).join('、')}`,
       suggestion: '可尝试：douban book chart 小说'
     }), async (category = '全部', opts) => {
-      const limit = parsePositiveInt(opts.limit, '--limit', 20);
+      const limit = parsePositiveIntAtMost(opts.limit, '--limit', 20, 20);
       const items = await withSpinner(
         `正在获取${category}热门图书...`,
         () => getBookChart(category, limit),
@@ -169,7 +175,7 @@ export function registerBookCommands(program: Command): void {
       options: `分类：${BOOK_LATEST_CATEGORIES.join('、')}`,
       suggestion: '可尝试：douban book new 科学新知'
     }), async (category = '全部', opts) => {
-      const limit = parsePositiveInt(opts.limit, '--limit', 20);
+      const limit = parsePositiveIntAtMost(opts.limit, '--limit', 20, 20);
       const items = await withSpinner(
         `正在获取${category}新书...`,
         () => getLatestBooks(category, limit),
@@ -324,15 +330,16 @@ export function registerBookCommands(program: Command): void {
       const order = opts.latest ? 'latest' : 'hot';
 
       if (opts.json) {
-        const result = await getBookComments(id, order, (page - 1) * limit, limit);
+        const result = await getBookComments(id, order, pageToOffset(page, limit), limit);
         console.log(JSON.stringify(result, null, 2));
         return;
       }
 
       await withPagination({
         startPage: page,
+        pageSize: limit,
         fetchPage: async (currentPage) => {
-          const start = (currentPage - 1) * limit;
+          const start = pageToOffset(currentPage, limit);
           const result = await withSpinner(
             `正在获取${opts.latest ? '最新' : '热门'}短评...`,
             () => getBookComments(id, order, start, limit),
@@ -341,9 +348,10 @@ export function registerBookCommands(program: Command): void {
           return { ...result, hasMore: start + result.items.length < result.total };
         },
         renderPage: (items, currentPage, total) => {
-          const start = (currentPage - 1) * limit;
+          const start = pageToOffset(currentPage, limit);
+          const { from, to } = getPageRange(currentPage, limit, items.length);
           console.log(`\n💬 ${opts.latest ? '最新' : '热门'}短评 (${id})`);
-          console.log(`共 ${(total || 0).toLocaleString()} 条，当前第 ${start + 1}-${start + items.length} 条\n`);
+          console.log(`共 ${(total || 0).toLocaleString()} 条，当前第 ${from}-${to} 条\n`);
           items.forEach((item, index) => {
             const stars = item.rating > 0 ? '⭐'.repeat(item.rating) : '';
             console.log(`${(start + index + 1).toString().padStart(2)}. ${item.user} ${stars} 👍${item.votes}`);
@@ -370,22 +378,24 @@ export function registerBookCommands(program: Command): void {
       const page = parsePositiveInt(opts.page, '--page', 1);
 
       if (opts.json) {
-        const result = await getBookReviews(id, (page - 1) * limit, limit);
+        const result = await getBookReviews(id, pageToOffset(page, limit), limit);
         console.log(JSON.stringify(result, null, 2));
         return;
       }
 
       await withPagination({
         startPage: page,
+        pageSize: limit,
         fetchPage: async (currentPage) => {
-          const start = (currentPage - 1) * limit;
+          const start = pageToOffset(currentPage, limit);
           const result = await withSpinner('正在获取热门书评...', () => getBookReviews(id, start, limit), true);
           return { ...result, hasMore: start + result.items.length < result.total };
         },
         renderPage: (items, currentPage, total) => {
-          const start = (currentPage - 1) * limit;
+          const start = pageToOffset(currentPage, limit);
+          const { from, to } = getPageRange(currentPage, limit, items.length);
           console.log(`\n📝 热门书评 (${id})`);
-          console.log(`共 ${(total || 0).toLocaleString()} 条，当前第 ${start + 1}-${start + items.length} 条\n`);
+          console.log(`共 ${(total || 0).toLocaleString()} 条，当前第 ${from}-${to} 条\n`);
           items.forEach((item, index) => {
             console.log(`${(start + index + 1).toString().padStart(2)}. ${item.user} ⭐${item.rating} 👍${item.votes} ${item.time}`);
             console.log(`    ${item.content}\n`);
@@ -410,22 +420,24 @@ export function registerBookCommands(program: Command): void {
       const page = parsePositiveInt(opts.page, '--page', 1);
 
       if (opts.json) {
-        const result = await getBookNotes(id, (page - 1) * limit, limit);
+        const result = await getBookNotes(id, pageToOffset(page, limit), limit);
         console.log(JSON.stringify(result, null, 2));
         return;
       }
 
       await withPagination({
         startPage: page,
+        pageSize: limit,
         fetchPage: async (currentPage) => {
-          const start = (currentPage - 1) * limit;
+          const start = pageToOffset(currentPage, limit);
           const result = await withSpinner('正在获取读书笔记...', () => getBookNotes(id, start, limit), true);
           return { ...result, hasMore: start + result.items.length < result.total };
         },
         renderPage: (items, currentPage, total) => {
-          const start = (currentPage - 1) * limit;
+          const start = pageToOffset(currentPage, limit);
+          const { from, to } = getPageRange(currentPage, limit, items.length);
           console.log(`\n📒 读书笔记 (${id})`);
-          console.log(`共 ${(total || 0).toLocaleString()} 条，当前第 ${start + 1}-${start + items.length} 条\n`);
+          console.log(`共 ${(total || 0).toLocaleString()} 条，当前第 ${from}-${to} 条\n`);
           items.forEach((item, index) => {
             console.log(`${(start + index + 1).toString().padStart(2)}. ${item.user} · ${item.chapter}`);
             console.log(`    ${item.content}`);
@@ -434,4 +446,6 @@ export function registerBookCommands(program: Command): void {
         }
       });
     }));
+
+  registerBookCollectionCommands(book);
 }

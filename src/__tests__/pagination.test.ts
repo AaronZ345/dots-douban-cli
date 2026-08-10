@@ -38,6 +38,7 @@ describe('utils/pagination', () => {
     expect(fetchPage).toHaveBeenCalledTimes(1);
     expect(renderPage).toHaveBeenCalledWith(['a'], 1, 2, true);
     expect(question).toHaveBeenCalledTimes(1);
+    expect(question).toHaveBeenCalledWith('[第 1 页] next?', expect.any(Function));
     expect(close).toHaveBeenCalledTimes(1);
   });
 
@@ -63,7 +64,7 @@ describe('utils/pagination', () => {
   });
 
   it('keeps the current page for boundary and invalid input', async () => {
-    const { readline } = createReadline(['n', 'p', 'p', 'invalid', 'q']);
+    const { readline } = createReadline(['n', 'p', 'p', 'g 999', 'g 999999999999999999999', 'invalid', 'q']);
     const fetchPage = vi.fn(async (page: number) => ({
       items: [`page-${page}`],
       total: 2,
@@ -76,6 +77,7 @@ describe('utils/pagination', () => {
       fetchPage,
       renderPage,
       startPage: 2,
+      pageSize: 1,
       interactive: true,
       createReadline: () => readline,
       writeMessage
@@ -84,6 +86,8 @@ describe('utils/pagination', () => {
     expect(fetchPage.mock.calls.map(([page]) => page)).toEqual([2, 1]);
     expect(writeMessage).toHaveBeenCalledWith('已到最后一页');
     expect(writeMessage).toHaveBeenCalledWith('已经是第一页');
+    expect(writeMessage).toHaveBeenCalledWith('页码超出范围，共 2 页');
+    expect(writeMessage).toHaveBeenCalledWith('页码必须是安全范围内的正整数');
     expect(writeMessage).toHaveBeenCalledWith('无效操作。请使用回车/n、p、g <页码> 或 q。');
   });
 

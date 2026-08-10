@@ -174,6 +174,16 @@ describe('user command', () => {
     expect(lstatSync(configPath).mode & 0o777).toBe(0o600);
   });
 
+  it('rejects an empty configured user ID', async () => {
+    process.argv = ['node', 'douban', 'config', '--user', ' ', '--json'];
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await createProgram().parseAsync(process.argv);
+
+    expect(process.exitCode).toBe(1);
+    expect(JSON.parse(String(stderr.mock.calls[0]?.[0])).error.code).toBe('INVALID_ARGUMENT');
+  });
+
   it('migrates the legacy config after validating the new copy', async () => {
     const tempHome = mkdtempSync(path.join(os.tmpdir(), 'douban-config-'));
     tempDirectories.push(tempHome);

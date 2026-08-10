@@ -13,7 +13,13 @@ import {
 } from '../api/movie.js';
 import { searchMovies } from '../api/search.js';
 import { withErrorHandler } from '../utils/error.js';
-import { isNumericId, parseNonNegativeInt, parsePositiveInt } from '../utils/parsing.js';
+import {
+  getPageRange,
+  isNumericId,
+  pageToOffset,
+  parseNonNegativeInt,
+  parsePositiveInt
+} from '../utils/parsing.js';
 import { withSpinner } from '../utils/spinner.js';
 import { withPagination } from '../utils/pagination.js';
 
@@ -75,11 +81,14 @@ function renderTable<Row>(rows: Row[], columns: TableColumn<Row>[]): void {
     return;
   }
 
-  const widths = columns.map((col) => {
+  const cells = rows.map((row, rowIndex) => (
+    columns.map((column) => column.value(row, rowIndex))
+  ));
+  const widths = columns.map((col, columnIndex) => {
     let maxWidth = Math.max(getDisplayWidth(col.header), col.minWidth ?? 0);
 
-    rows.forEach((row, index) => {
-      const valueWidth = getDisplayWidth(col.value(row, index));
+    cells.forEach((row) => {
+      const valueWidth = getDisplayWidth(row[columnIndex]);
       if (valueWidth > maxWidth) {
         maxWidth = valueWidth;
       }
@@ -90,10 +99,10 @@ function renderTable<Row>(rows: Row[], columns: TableColumn<Row>[]): void {
 
   console.log(columns.map((col, i) => padCell(col.header, widths[i])).join('   '));
 
-  rows.forEach((row, rowIndex) => {
+  cells.forEach((row) => {
     console.log(
-      columns
-        .map((col, i) => padCell(col.value(row, rowIndex), widths[i]))
+      row
+        .map((value, i) => padCell(value, widths[i]))
         .join('   ')
     );
   });
@@ -158,14 +167,15 @@ function normalizeMovieIdInput(value: string, fieldName = '电影 ID'): string {
 export function registerMovieCommands(program: Command): void {
   program
     .command('hot')
+    .helpGroup('电影:')
     .description('获取热门电影或剧集')
     .option('--tv', '显示剧集而非电影')
-    .option('-t, --tag <tag>', '按标签筛选（热门/美剧/日剧/韩剧/国产剧/综艺/最新）', '热门')
+    .option('-t, --tag <tag>', '按标签筛选（热门/美剧/英剧/日剧/韩剧/国产剧/综艺/最新）', '热门')
     .option('-n, --limit <n>', '返回数量', '20')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler({
       command: 'hot',
-      options: '标签：热门、美剧、日剧、韩剧、国产剧、综艺、最新',
+      options: `标签：${TV_TAGS.join('、')}`,
       suggestion: '可尝试：douban hot -t 热门'
     }, async (opts) => {
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
@@ -190,7 +200,8 @@ export function registerMovieCommands(program: Command): void {
 
   program
     .command('tv <tag>')
-    .description('按标签获取剧集列表（美剧/日剧/韩剧/国产剧/综艺）')
+    .helpGroup('电影:')
+    .description('按标签获取剧集列表（美剧/英剧/日剧/韩剧/国产剧/综艺）')
     .option('-n, --limit <n>', '返回数量', '20')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler((args) => ({
@@ -223,6 +234,7 @@ export function registerMovieCommands(program: Command): void {
 
   program
     .command('rank <genre>')
+    .helpGroup('电影:')
     .description('按类型查看高分电影排行（科幻/动作/爱情/动画/悬疑...）')
     .option('-n, --limit <n>', '返回数量', '20')
     .option('--json', '以 JSON 输出')
@@ -261,6 +273,7 @@ export function registerMovieCommands(program: Command): void {
 
   program
     .command('top250')
+    .helpGroup('电影:')
     .description('获取豆瓣 Top 250 电影')
     .option('-p, --page <n>', '页码（从 1 开始）', '1')
     .option('--json', '以 JSON 输出')
@@ -273,7 +286,7 @@ export function registerMovieCommands(program: Command): void {
       const limit = 25;
 
       if (opts.json) {
-        const start = (page - 1) * limit;
+        const start = pageToOffset(page, limit);
         const items = await withSpinner(
           '正在获取豆瓣 Top 250...',
           () => getTop250(start, limit),
@@ -285,8 +298,9 @@ export function registerMovieCommands(program: Command): void {
 
       await withPagination({
         startPage: page,
+        pageSize: limit,
         fetchPage: async (currentPage) => {
-          const start = (currentPage - 1) * limit;
+          const start = pageToOffset(currentPage, limit);
           const items = await withSpinner(
             '正在获取豆瓣 Top 250...',
             () => getTop250(start, limit),
@@ -299,9 +313,7 @@ export function registerMovieCommands(program: Command): void {
           };
         },
         renderPage: (items, currentPage) => {
-          const start = (currentPage - 1) * limit;
-          const from = items.length > 0 ? start + 1 : 0;
-          const to = start + items.length;
+          const { from, to } = getPageRange(currentPage, limit, items.length);
 
           console.log(`
 🎬 豆瓣 Top 250，当前显示第 ${from}-${to} 条
@@ -324,6 +336,7 @@ export function registerMovieCommands(program: Command): void {
 
   program
     .command('search <keyword>')
+    .helpGroup('电影:')
     .description('按关键词搜索电影')
     .option('-s, --start <n>', '起始偏移', '0')
     .option('-n, --limit <n>', '返回数量', '20')
@@ -362,6 +375,7 @@ export function registerMovieCommands(program: Command): void {
 
   program
     .command('movie <id>')
+    .helpGroup('电影:')
     .description('按电影 ID 或片名获取详情')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler((args) => ({
@@ -417,6 +431,7 @@ export function registerMovieCommands(program: Command): void {
 
   program
     .command('rating <id>')
+    .helpGroup('电影:')
     .description('获取电影评分分布')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler((args) => ({
@@ -460,6 +475,7 @@ export function registerMovieCommands(program: Command): void {
 
   program
     .command('coming')
+    .helpGroup('电影:')
     .description('获取即将上映电影')
     .option('-n, --limit <n>', '返回数量', '20')
     .option('--json', '以 JSON 输出')
@@ -491,6 +507,7 @@ export function registerMovieCommands(program: Command): void {
 
   program
     .command('weekly')
+    .helpGroup('电影:')
     .description('获取一周口碑榜')
     .option('-n, --limit <n>', '返回数量', '10')
     .option('--json', '以 JSON 输出')
@@ -525,6 +542,7 @@ export function registerMovieCommands(program: Command): void {
 
   program
     .command('reviews <movieId>')
+    .helpGroup('电影:')
     .description('按电影 ID 获取热门影评')
     .option('-p, --page <n>', '页码（从 1 开始）', '1')
     .option('-n, --limit <n>', '返回数量', '20')
@@ -540,7 +558,7 @@ export function registerMovieCommands(program: Command): void {
 
       if (opts.json) {
         // JSON mode returns one page without an interactive prompt.
-        const start = (page - 1) * limit;
+        const start = pageToOffset(page, limit);
         const { items, total } = await withSpinner(
           '正在获取热门影评...',
           () => getReviews(id, start, limit),
@@ -552,8 +570,9 @@ export function registerMovieCommands(program: Command): void {
 
       await withPagination({
         startPage: page,
+        pageSize: limit,
         fetchPage: async (currentPage) => {
-          const start = (currentPage - 1) * limit;
+          const start = pageToOffset(currentPage, limit);
           const { items, total } = await withSpinner(
             '正在获取热门影评...',
             () => getReviews(id, start, limit),
@@ -566,9 +585,8 @@ export function registerMovieCommands(program: Command): void {
           };
         },
         renderPage: (items, currentPage, total) => {
-          const start = (currentPage - 1) * limit;
-          const from = items.length > 0 ? start + 1 : 0;
-          const to = start + items.length;
+          const start = pageToOffset(currentPage, limit);
+          const { from, to } = getPageRange(currentPage, limit, items.length);
 
           console.log(`
 📝 热门影评 (${id})
@@ -596,6 +614,7 @@ export function registerMovieCommands(program: Command): void {
 
   program
     .command('comments <movieId>')
+    .helpGroup('电影:')
     .description('按电影 ID 获取短评')
     .option('--latest', '按最新排序（默认按热门）')
     .option('-p, --page <n>', '页码（从 1 开始）', '1')
@@ -613,7 +632,7 @@ export function registerMovieCommands(program: Command): void {
 
       if (opts.json) {
         // JSON mode returns one page without an interactive prompt.
-        const start = (page - 1) * limit;
+        const start = pageToOffset(page, limit);
         const { items, total } = await withSpinner(
           `正在获取${opts.latest ? '最新' : '热门'}短评...`,
           () => getComments(id, orderBy, start, limit),
@@ -625,8 +644,9 @@ export function registerMovieCommands(program: Command): void {
 
       await withPagination({
         startPage: page,
+        pageSize: limit,
         fetchPage: async (currentPage) => {
-          const start = (currentPage - 1) * limit;
+          const start = pageToOffset(currentPage, limit);
           const { items, total } = await withSpinner(
             `正在获取${opts.latest ? '最新' : '热门'}短评...`,
             () => getComments(id, orderBy, start, limit),
@@ -639,9 +659,8 @@ export function registerMovieCommands(program: Command): void {
           };
         },
         renderPage: (items, currentPage, total) => {
-          const start = (currentPage - 1) * limit;
-          const from = items.length > 0 ? start + 1 : 0;
-          const to = start + items.length;
+          const start = pageToOffset(currentPage, limit);
+          const { from, to } = getPageRange(currentPage, limit, items.length);
 
           console.log(`
 💬 ${opts.latest ? '最新' : '热门'}短评 (${id})

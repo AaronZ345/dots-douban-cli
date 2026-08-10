@@ -48,6 +48,19 @@ describe('utils/error', () => {
     expect(process.exitCode).toBe(1);
   });
 
+  it('classifies documented option bounds as invalid arguments', async () => {
+    process.argv = ['node', 'douban', 'book', 'chart', '--limit', '21', '--json'];
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const action = withErrorHandler({ command: 'book chart' }, async () => {
+      throw new Error('--limit 不能超过 20');
+    });
+
+    await action();
+
+    const payload = JSON.parse(String(stderr.mock.calls[0]?.[0]));
+    expect(payload.error.code).toBe('INVALID_ARGUMENT');
+  });
+
   it('uses structured transport metadata instead of message matching', async () => {
     process.argv = ['node', 'douban', 'movie', '123', '--json'];
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => undefined);

@@ -91,6 +91,7 @@ function classifyError(error: unknown, message: string): CliErrorCode {
     message.includes('必须') ||
     message.includes('不能为空') ||
     message.includes('未知') ||
+    message.includes('不能超过') ||
     message.includes('不能同时')
   ) {
     return 'INVALID_ARGUMENT';

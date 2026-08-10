@@ -19,6 +19,27 @@ const rootHelp = run('--help');
 assert.equal(rootHelp.status, 0);
 assert.match(rootHelp.stdout, /douban - 豆瓣命令行工具 v\d+/);
 assert.doesNotMatch(rootHelp.stdout, /vundefined/);
+assert.match(rootHelp.stdout, /电影:/);
+assert.match(rootHelp.stdout, /书籍:/);
+assert.match(rootHelp.stdout, /收藏与账号:/);
+assert.match(rootHelp.stdout, /写入操作:/);
+for (const bookCommand of [
+  'hot',
+  'top250',
+  'user',
+  'export',
+  'chart',
+  'new|latest',
+  'tag',
+  'search',
+  'info',
+  'rating',
+  'comments',
+  'reviews',
+  'notes'
+]) {
+  assert.match(rootHelp.stdout, new RegExp(`douban book ${bookCommand.replace('|', '\\|')}`));
+}
 assert.equal(rootHelp.stderr, '');
 
 const bookHelp = run('book', '--help');
@@ -31,6 +52,13 @@ assert.match(bookHelp.stdout, /comments/);
 const legacyHotHelp = run('book', 'hot', '--help');
 assert.equal(legacyHotHelp.status, 0);
 assert.match(legacyHotHelp.stdout, /--start/);
+
+const oversizedBookChart = run('book', 'chart', '--limit', '21', '--json');
+assert.equal(oversizedBookChart.status, 1);
+assert.equal(oversizedBookChart.stdout, '');
+const oversizedBookChartPayload = JSON.parse(oversizedBookChart.stderr);
+assert.equal(oversizedBookChartPayload.error.code, 'INVALID_ARGUMENT');
+assert.match(oversizedBookChartPayload.error.message, /不能超过 20/);
 
 const searchHelp = run('search', '--help');
 assert.equal(searchHelp.status, 0);

@@ -5,7 +5,7 @@ import { ensureAuth } from '../auth.js';
 import { getUserCollectionPage } from '../api/collection.js';
 import { getUserCollection } from '../api/user.js';
 import { withErrorHandler } from '../utils/error.js';
-import { parsePositiveInt } from '../utils/parsing.js';
+import { pageToOffset, parsePositiveInt } from '../utils/parsing.js';
 import { withSpinner } from '../utils/spinner.js';
 import { withPagination } from '../utils/pagination.js';
 import { resolveCliStoragePaths } from '../storage/paths.js';
@@ -102,6 +102,7 @@ function writeConfig(config: CliConfig): void {
 export function registerUserCommands(program: Command): void {
   program
     .command('user <userId>')
+    .helpGroup('收藏与账号:')
     .description('获取指定用户的电影片单')
     .option('--wish', '查看"想看"列表（默认看过）')
     .option('--doing', '查看"在看"列表')
@@ -116,7 +117,7 @@ export function registerUserCommands(program: Command): void {
       const { status, label: statusLabel } = resolveCollectionStatus(opts);
       const limit = parsePositiveInt(opts.limit, '--limit', 15);
       const page = parsePositiveInt(opts.page, '--page', 1);
-      const startForPage = (page - 1) * limit;
+      const startForPage = pageToOffset(page, limit);
 
       if (opts.json) {
         const result = await withSpinner(
@@ -139,8 +140,9 @@ export function registerUserCommands(program: Command): void {
 
       await withPagination({
         startPage: page,
+        pageSize: limit,
         fetchPage: async (currentPage) => {
-          const start = (currentPage - 1) * limit;
+          const start = pageToOffset(currentPage, limit);
           const result = await withSpinner(
             `正在获取用户 ${userId} 的${statusLabel}片单...`,
             () => getUserCollectionPage({
@@ -160,7 +162,7 @@ export function registerUserCommands(program: Command): void {
           };
         },
         renderPage: (items, currentPage, _total, hasMore) => {
-          const start = (currentPage - 1) * limit;
+          const start = pageToOffset(currentPage, limit);
           console.log(`
 👤 用户 ${userId} ${statusLabel}（第 ${currentPage} 页）
 `);
@@ -188,6 +190,7 @@ export function registerUserCommands(program: Command): void {
 
   program
     .command('config')
+    .helpGroup('收藏与账号:')
     .description('设置本地 douban-cli 配置')
     .option('--user <id>', '设置 me 命令默认用户 ID')
     .option('--json', '以 JSON 输出')
@@ -197,8 +200,10 @@ export function registerUserCommands(program: Command): void {
     }, async (opts) => {
       const current = readConfig();
 
-      if (opts.user) {
-        current.user = String(opts.user).trim();
+      if (opts.user !== undefined) {
+        const userId = String(opts.user).trim();
+        if (!userId) throw new Error('用户 ID 不能为空');
+        current.user = userId;
         writeConfig(current);
       }
 
@@ -219,6 +224,7 @@ export function registerUserCommands(program: Command): void {
 
   program
     .command('me')
+    .helpGroup('收藏与账号:')
     .description('获取配置用户的个人片单')
     .option('--wish', '查看"想看"列表（默认看过）')
     .option('--doing', '查看"在看"列表')

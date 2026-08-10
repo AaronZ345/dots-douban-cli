@@ -8,7 +8,7 @@ import {
 } from '../api/collection.js';
 import { secureAtomicWriteFile } from '../storage/secure-file.js';
 import { withErrorHandler } from '../utils/error.js';
-import { parsePositiveInt } from '../utils/parsing.js';
+import { pageToOffset, parsePositiveInt } from '../utils/parsing.js';
 import { withPagination } from '../utils/pagination.js';
 import { withSpinner } from '../utils/spinner.js';
 
@@ -63,7 +63,7 @@ function renderBookCollection(
   limit: number,
   hasMore: boolean
 ): void {
-  const start = (page - 1) * limit;
+  const start = pageToOffset(page, limit);
   console.log(`\n📚 用户 ${userId} · ${statusLabel}（第 ${page} 页）\n`);
 
   if (items.length === 0) {
@@ -264,7 +264,7 @@ export function registerBookCollectionCommands(book: Command): void {
       const { status, label: statusLabel } = resolveBookCollectionStatus(opts);
       const page = parsePositiveInt(opts.page, '--page', 1);
       const limit = parsePositiveInt(opts.limit, '--limit', DEFAULT_PAGE_SIZE);
-      const start = (page - 1) * limit;
+      const start = pageToOffset(page, limit);
 
       if (opts.json) {
         const result = await withSpinner(
@@ -279,8 +279,9 @@ export function registerBookCollectionCommands(book: Command): void {
 
       await withPagination({
         startPage: page,
+        pageSize: limit,
         fetchPage: async (currentPage) => {
-          const currentStart = (currentPage - 1) * limit;
+          const currentStart = pageToOffset(currentPage, limit);
           const result = await withSpinner(
             `正在获取用户 ${userId} 的${statusLabel}书单...`,
             () => getUserCollectionPage({

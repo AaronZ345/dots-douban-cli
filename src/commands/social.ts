@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { Command } from 'commander';
 import { ensureAuth, type VerifiedAuthSession } from '../auth.js';
 import { getCollectionRecords, getFeed } from '../api/account.js';
@@ -122,6 +123,7 @@ function parseExportFormat(value: string | undefined): ExportFormat {
 export function registerSocialCommands(program: Command): void {
   program
     .command('review <movieId> <title> [content]')
+    .helpGroup('写入操作:')
     .description('写长评 [需登录]')
     .option('--file <path>', '从文件读取长评内容')
     .option('--json', '以 JSON 输出')
@@ -130,6 +132,9 @@ export function registerSocialCommands(program: Command): void {
       target: `电影ID: ${String(args[0] || '未指定')}`,
       suggestion: '可尝试：douban review 1292052 "标题" "正文"'
     }), async (movieId, title, content, opts) => {
+      if (opts.file && content) {
+        throw new Error('--file 不能与 [content] 同时使用');
+      }
       const body = readReviewContent(content, opts.file);
       if (!body) throw new Error('长评内容不能为空，请传 [content] 或 --file');
 
@@ -152,6 +157,7 @@ export function registerSocialCommands(program: Command): void {
 
   program
     .command('feed')
+    .helpGroup('收藏与账号:')
     .description('查看关注动态/时间线 [需登录]')
     .option('-n, --limit <n>', '返回数量', '20')
     .option('--json', '以 JSON 输出')
@@ -188,6 +194,7 @@ export function registerSocialCommands(program: Command): void {
 
   program
     .command('stats')
+    .helpGroup('收藏与账号:')
     .description('我的统计（今年看了多少片） [需登录]')
     .option('-y, --year <year>', '统计年份，默认今年')
     .option('--json', '以 JSON 输出')
@@ -228,6 +235,7 @@ export function registerSocialCommands(program: Command): void {
 
   program
     .command('export')
+    .helpGroup('收藏与账号:')
     .description('导出我的观影记录 [需登录]')
     .requiredOption('-o, --output <path>', '输出文件路径（包含个人数据，必须明确指定）')
     .option('-f, --format <format>', '导出格式：json/csv', 'json')
@@ -242,10 +250,11 @@ export function registerSocialCommands(program: Command): void {
       const delaySeconds = parseDelaySeconds(opts.delay, 1);
       const delayMs = Math.round(delaySeconds * 1000);
 
-      const outputPath = String(opts.output || '').trim();
-      if (!outputPath) {
+      const rawOutputPath = String(opts.output || '').trim();
+      if (!rawOutputPath) {
         throw new Error('输出文件路径不能为空');
       }
+      const outputPath = path.resolve(rawOutputPath);
 
       const auth = await withSpinner('正在检查登录状态...', () => ensureAuth(), true);
       const me = currentUserProfile(auth);
@@ -288,6 +297,7 @@ export function registerSocialCommands(program: Command): void {
 
   program
     .command('follow <userId>')
+    .helpGroup('写入操作:')
     .description('关注用户 [需登录]')
     .option('--delay <seconds>', '请求前延迟（秒）', '0')
     .option('--json', '以 JSON 输出')
@@ -316,6 +326,7 @@ export function registerSocialCommands(program: Command): void {
 
   program
     .command('unfollow <userId>')
+    .helpGroup('写入操作:')
     .description('取消关注用户 [需登录]')
     .option('--delay <seconds>', '请求前延迟（秒）', '0')
     .option('--json', '以 JSON 输出')

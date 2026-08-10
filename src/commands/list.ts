@@ -7,6 +7,7 @@ import { withSpinner } from '../utils/spinner.js';
 export function registerListCommands(program: Command): void {
   program
     .command('list')
+    .helpGroup('收藏与账号:')
     .description('获取热门豆列推荐')
     .option('-n, --limit <n>', '返回数量', '20')
     .option('--json', '以 JSON 输出')

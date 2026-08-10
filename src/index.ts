@@ -19,70 +19,13 @@ const program = new Command();
 program
   .name('douban')
   .description('豆瓣命令行工具（电影 / 书籍 / 用户）')
-  .version(pkg.version || '0.0.0')
+  .version(pkg.version || '0.0.0', '-V, --version', '显示版本')
+  .helpOption('-h, --help', '显示帮助')
   .exitOverride()
   .configureOutput({
     // Commander errors are rendered by the shared CLI error handler below.
     outputError: () => undefined
   });
-
-program.configureHelp({
-  formatHelp: (cmd) => {
-    if (cmd.parent) {
-      const defaultHelp = new Help();
-      return defaultHelp.formatHelp(cmd, defaultHelp);
-    }
-
-    const title = `douban - 豆瓣命令行工具 v${cmd.version()}\n`;
-    const usage = `用法: douban <command> [options]\n`;
-
-    const groups: Record<string, string[]> = {
-      '电影': ['hot', 'tv', 'rank', 'top250', 'coming', 'weekly', 'movie', 'rating', 'reviews', 'comments'],
-      '书籍': ['book'],
-      '用户': ['me', 'user', 'config', 'list', 'login', 'whoami', 'logout', 'mark', 'unmark', 'rate', 'comment', 'review', 'feed', 'stats', 'export', 'follow', 'unfollow'],
-      '搜索': ['search']
-    };
-
-    let output = title + usage + '\n';
-    const cmds = cmd.commands;
-    const groupedNames = new Set(Object.values(groups).flat());
-
-    for (const [group, names] of Object.entries(groups)) {
-      const matched = cmds.filter((c) => names.includes(c.name()));
-      if (matched.length === 0) continue;
-
-      output += `${group}:\n`;
-      for (const c of matched) {
-        const desc = c
-          .description()
-          .replace(/，?需要登录(?:\s*\[需登录\])?/g, ' [需登录]')
-          .replace(/\[需登录\]\s*\[需登录\]/g, '[需登录]')
-          .trim();
-        output += `  ${c.name().padEnd(16)} ${desc}\n`;
-      }
-      output += '\n';
-    }
-
-    const ungrouped = cmds.filter((command) => !groupedNames.has(command.name()));
-    if (ungrouped.length > 0) {
-      output += '其他:\n';
-      for (const command of ungrouped) {
-        output += `  ${command.name().padEnd(16)} ${command.description()}\n`;
-      }
-      output += '\n';
-    }
-
-    output += '示例:\n';
-    output += '  douban hot             查看热门电影\n';
-    output += '  douban search 沙丘     搜索电影\n';
-    output += '  douban top250          豆瓣 Top 250\n';
-    output += '  douban movie 1292052   查看电影详情\n';
-    output += '  douban book chart      查看当前热门图书榜\n';
-    output += '  douban book info 三体  查看书籍详情\n';
-
-    return output;
-  }
-});
 
 registerMovieCommands(program);
 registerBookCommands(program);
@@ -92,6 +35,31 @@ registerListCommands(program);
 registerAuthCommands(program);
 registerMarkCommands(program);
 registerSocialCommands(program);
+
+program.addHelpText('beforeAll', () => `douban - 豆瓣命令行工具 v${program.version()}\n`);
+program.addHelpText('after', () => {
+  const book = program.commands.find((command) => command.name() === 'book');
+  const bookCommands = book?.commands ?? [];
+  const help = new Help();
+  const terms = bookCommands.map((command) => help.subcommandTerm(command));
+  const termWidth = Math.max(...terms.map((term) => term.length), 0);
+  const bookSummary = bookCommands
+    .map((command, index) => `  douban book ${terms[index].padEnd(termWidth)}  ${command.description()}`)
+    .join('\n');
+
+  return `
+图书功能:
+${bookSummary}
+
+示例:
+  douban hot             查看热门电影
+  douban search 沙丘     搜索电影
+  douban top250          豆瓣 Top 250
+  douban movie 1292052   查看电影详情
+  douban book chart      查看当前热门图书榜
+  douban book info 三体  查看书籍详情
+`;
+});
 
 program.parseAsync().catch((error) => {
   handleProgramError(error);

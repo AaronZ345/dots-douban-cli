@@ -39,6 +39,7 @@ function parseBrowserName(value: string | undefined): BrowserName | undefined {
 export function registerAuthCommands(program: Command): void {
   program
     .command('login')
+    .helpGroup('收藏与账号:')
     .description('打开浏览器登录豆瓣并保存 Cookie')
     .option('--browser <browser>', '明确从指定浏览器读取登录态')
     .option('--profile <profile>', '指定浏览器配置目录（需配合 --browser）')
@@ -71,6 +72,7 @@ export function registerAuthCommands(program: Command): void {
 
   program
     .command('whoami')
+    .helpGroup('收藏与账号:')
     .description('显示当前登录用户信息 [需登录]')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler({
@@ -102,6 +104,7 @@ export function registerAuthCommands(program: Command): void {
 
   program
     .command('logout')
+    .helpGroup('收藏与账号:')
     .description('清除本地保存的登录态')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler({

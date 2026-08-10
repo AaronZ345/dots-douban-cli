@@ -92,6 +92,12 @@ function isValidScore(value: number | undefined): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 5;
 }
 
+function rejectMixedBatchInput(filePath: string | undefined, hasInlineInput: boolean): void {
+  if (filePath && hasInlineInput) {
+    throw new Error('--file 不能与单条模式参数同时使用');
+  }
+}
+
 function finalizeBatch(results: BatchResult[], outputJson: boolean): void {
   const okCount = results.filter((r) => r.ok).length;
   if (!outputJson) {
@@ -105,7 +111,8 @@ function finalizeBatch(results: BatchResult[], outputJson: boolean): void {
 export function registerMarkCommands(program: Command): void {
   program
     .command('mark [id]')
-    .description('标记电影状态（想看/看过/在看），需要登录 [需登录]')
+    .helpGroup('写入操作:')
+    .description('标记电影状态（想看/看过/在看） [需登录]')
     .option('--wish', '标记为“想看”')
     .option('--watched', '标记为“看过”')
     .option('--watching', '标记为“在看”')
@@ -117,6 +124,7 @@ export function registerMarkCommands(program: Command): void {
       options: '状态：--wish / --watched / --watching（三选一）',
       suggestion: '可尝试：douban mark 1292052 --wish'
     }, async (id: string | undefined, opts) => {
+      rejectMixedBatchInput(opts.file, Boolean(id));
       if (!id && !opts.file) throw new Error('请提供电影 ID 或使用 --file');
       const interest = selectInterestFromOptions(opts);
       const delaySeconds = parseDelaySeconds(opts.delay);
@@ -156,7 +164,8 @@ export function registerMarkCommands(program: Command): void {
 
   program
     .command('rate [id]')
-    .description('给电影评分（1-5），需要登录 [需登录]')
+    .helpGroup('写入操作:')
+    .description('给电影评分（1-5） [需登录]')
     .option('--score <score>', '单条模式评分（1-5）')
     .option('--file <path>', '批量模式：每行 <id>,<score>')
     .option('--delay <seconds>', '批量请求间隔（秒），默认随机 1-2 秒')
@@ -166,6 +175,7 @@ export function registerMarkCommands(program: Command): void {
       options: '评分范围：1-5',
       suggestion: '可尝试：douban rate 1292052 --score 5'
     }, async (id: string | undefined, opts) => {
+      rejectMixedBatchInput(opts.file, Boolean(id || opts.score));
       const delaySeconds = parseDelaySeconds(opts.delay);
       const singleScore = Number(opts.score);
 
@@ -230,7 +240,8 @@ export function registerMarkCommands(program: Command): void {
 
   program
     .command('comment [id] [text]')
-    .description('发布短评，需要登录 [需登录]')
+    .helpGroup('写入操作:')
+    .description('发布短评 [需登录]')
     .option('--file <path>', '批量模式：每行 <id>,<comment>')
     .option('--delay <seconds>', '批量请求间隔（秒），默认随机 1-2 秒')
     .option('--json', '以 JSON 输出')
@@ -238,6 +249,7 @@ export function registerMarkCommands(program: Command): void {
       command: 'comment',
       suggestion: '可尝试：douban comment 1292052 "值得重看"'
     }, async (id: string | undefined, text: string | undefined, opts) => {
+      rejectMixedBatchInput(opts.file, Boolean(id || text));
       const delaySeconds = parseDelaySeconds(opts.delay);
 
       if (!opts.file && (!isNumericId(id || '') || !text || !text.trim())) {
@@ -299,7 +311,8 @@ export function registerMarkCommands(program: Command): void {
 
   program
     .command('unmark [id]')
-    .description('取消标记（想看/看过/在看），需要登录 [需登录]')
+    .helpGroup('写入操作:')
+    .description('取消标记（想看/看过/在看） [需登录]')
     .option('--file <path>', '批量模式：每行一个条目 ID')
     .option('--delay <seconds>', '批量请求间隔（秒），默认随机 1-2 秒')
     .option('--json', '以 JSON 输出')
@@ -307,6 +320,7 @@ export function registerMarkCommands(program: Command): void {
       command: 'unmark',
       suggestion: '可尝试：douban unmark 1292052'
     }, async (id: string | undefined, opts) => {
+      rejectMixedBatchInput(opts.file, Boolean(id));
       if (!id && !opts.file) {
         throw new Error('请提供电影 ID 或使用 --file');
       }
