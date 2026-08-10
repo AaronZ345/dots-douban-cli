@@ -25,6 +25,8 @@ interface TableColumn<Row> {
   minWidth?: number;
 }
 
+const TV_TAGS = ['热门', '美剧', '英剧', '日剧', '韩剧', '国产剧', '综艺', '最新'] as const;
+
 function getDisplayWidth(text: string): number {
   let width = 0;
 
@@ -189,7 +191,7 @@ export function registerMovieCommands(program: Command): void {
     }));
 
   program
-    .command('tv [tag]')
+    .command('tv <tag>')
     .description('按标签获取剧集列表（美剧/日剧/韩剧/国产剧/综艺）')
     .option('-n, --limit <n>', '返回数量', '20')
     .option('--json', '以 JSON 输出')
@@ -199,12 +201,8 @@ export function registerMovieCommands(program: Command): void {
       options: '标签：美剧、日剧、韩剧、国产剧、综艺',
       suggestion: '可尝试：douban tv 美剧'
     }), async (tag, opts) => {
-      if (!tag) {
-        console.log('\n📺 剧集 - 请指定标签\n');
-        console.log('用法: douban tv <标签>\n');
-        console.log('可选标签: 美剧  日剧  韩剧  国产剧  综艺  热门  最新\n');
-        console.log('示例: douban tv 美剧');
-        return;
+      if (!TV_TAGS.includes(tag as (typeof TV_TAGS)[number])) {
+        throw new Error(`未知剧集标签: ${tag}。可选标签：${TV_TAGS.join('、')}`);
       }
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
       const items = await withSpinner(
@@ -226,7 +224,7 @@ export function registerMovieCommands(program: Command): void {
     }));
 
   program
-    .command('rank [genre]')
+    .command('rank <genre>')
     .description('按类型查看高分电影排行（科幻/动作/爱情/动画/悬疑...）')
     .option('-n, --limit <n>', '返回数量', '20')
     .option('--json', '以 JSON 输出')
@@ -236,31 +234,10 @@ export function registerMovieCommands(program: Command): void {
       options: `可用类型：${Object.keys(GENRES).join('、')}`,
       suggestion: '可尝试：douban rank 科幻'
     }), async (genre, opts) => {
-      if (!genre) {
-        console.log('\n🏆 电影排行 - 请指定类型\n');
-        console.log('用法: douban rank <类型>\n');
-        console.log('可选类型:');
-        const genres = Object.keys(GENRES);
-        const rows = [];
-        for (let i = 0; i < genres.length; i += 6) {
-          rows.push(genres.slice(i, i + 6).join('  '));
-        }
-        rows.forEach(row => console.log(`  ${row}`));
-        console.log('\n示例: douban rank 科幻');
-        return;
-      }
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
       const typeId = GENRES[genre];
       if (!typeId) {
-        console.log(`\n❌ 未知类型: ${genre}\n`);
-        console.log('可选类型:');
-        const genres = Object.keys(GENRES);
-        const rows = [];
-        for (let i = 0; i < genres.length; i += 6) {
-          rows.push(genres.slice(i, i + 6).join('  '));
-        }
-        rows.forEach(row => console.log(`  ${row}`));
-        return;
+        throw new Error(`未知类型: ${genre}。可选类型：${Object.keys(GENRES).join('、')}`);
       }
 
       const items = await withSpinner(
@@ -310,7 +287,6 @@ export function registerMovieCommands(program: Command): void {
 
       await withPagination({
         startPage: page,
-        prompt: '\n按回车加载下一页，输入 q 退出: ',
         fetchPage: async (currentPage) => {
           const start = (currentPage - 1) * limit;
           const items = await withSpinner(
@@ -395,7 +371,7 @@ export function registerMovieCommands(program: Command): void {
     }));
 
   program
-    .command('search [keyword]')
+    .command('search <keyword>')
     .description('按关键词搜索电影')
     .option('-s, --start <n>', '起始偏移', '0')
     .option('-n, --limit <n>', '返回数量', '20')
@@ -405,12 +381,6 @@ export function registerMovieCommands(program: Command): void {
       target: `关键词: ${String(args[0] || '未指定')}`,
       suggestion: '可尝试：douban search 沙丘'
     }), async (keyword, opts) => {
-      if (!keyword) {
-        console.log('\n🔍 搜索电影 - 请指定关键词\n');
-        console.log('用法: douban search <关键词>\n');
-        console.log('示例: douban search 沙丘');
-        return;
-      }
       const start = parseNonNegativeInt(opts.start, '--start', 0);
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
       const items = await withSpinner(
@@ -439,7 +409,7 @@ export function registerMovieCommands(program: Command): void {
     }));
 
   program
-    .command('movie [id]')
+    .command('movie <id>')
     .description('按电影 ID 或片名获取详情')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler((args) => ({
@@ -447,14 +417,6 @@ export function registerMovieCommands(program: Command): void {
       target: `ID: ${String(args[0] || '未指定')}`,
       suggestion: '确认 ID 是否正确，可使用 douban search 搜索'
     }), async (id, opts) => {
-      if (!id) {
-        console.log('\n🎬 电影详情 - 请指定 ID\n');
-        console.log('用法: douban movie <ID>\n');
-        console.log('获取 ID: douban search <关键词>\n');
-        console.log('示例: douban movie 1292052');
-        return;
-      }
-
       let movieId = id.trim();
       if (!isNumericId(movieId)) {
         const result = await searchMovies(movieId, 0, 1);
@@ -502,7 +464,7 @@ export function registerMovieCommands(program: Command): void {
     }));
 
   program
-    .command('rating [id]')
+    .command('rating <id>')
     .description('获取电影评分分布')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler((args) => ({
@@ -510,12 +472,6 @@ export function registerMovieCommands(program: Command): void {
       target: `ID: ${String(args[0] || '未指定')}`,
       suggestion: '可尝试：douban rating 1292052'
     }), async (id, opts) => {
-      if (!id) {
-        console.log('\n⭐ 评分分布 - 请指定电影 ID\n');
-        console.log('用法: douban rating <ID>\n');
-        console.log('示例: douban rating 1292052');
-        return;
-      }
       const movieId = normalizeMovieIdInput(id);
       const stats = await withSpinner(
         '正在获取评分分布...',
@@ -616,7 +572,7 @@ export function registerMovieCommands(program: Command): void {
     }));
 
   program
-    .command('reviews [movieId]')
+    .command('reviews <movieId>')
     .description('按电影 ID 获取热门影评')
     .option('-p, --page <n>', '页码（从 1 开始）', '1')
     .option('-n, --limit <n>', '返回数量', '20')
@@ -626,18 +582,12 @@ export function registerMovieCommands(program: Command): void {
       target: `ID: ${String(args[0] || '未指定')}`,
       suggestion: '可尝试：douban reviews 1292052 --page 2'
     }), async (movieId, opts) => {
-      if (!movieId) {
-        console.log('\n📝 热门影评 - 请指定电影 ID\n');
-        console.log('用法: douban reviews <ID>\n');
-        console.log('示例: douban reviews 1292052');
-        return;
-      }
       const id = normalizeMovieIdInput(movieId);
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
       const page = parsePositiveInt(opts.page, '--page', 1);
 
       if (opts.json) {
-        // JSON 模式：单次输出
+        // JSON mode returns one page without an interactive prompt.
         const start = (page - 1) * limit;
         const { items, total } = await withSpinner(
           '正在获取热门影评...',
@@ -693,7 +643,7 @@ export function registerMovieCommands(program: Command): void {
     }));
 
   program
-    .command('comments [movieId]')
+    .command('comments <movieId>')
     .description('按电影 ID 获取短评')
     .option('--latest', '按最新排序（默认按热门）')
     .option('-p, --page <n>', '页码（从 1 开始）', '1')
@@ -704,19 +654,13 @@ export function registerMovieCommands(program: Command): void {
       target: `ID: ${String(args[0] || '未指定')}`,
       suggestion: '可尝试：douban comments 1292052 --page 2'
     }), async (movieId, opts) => {
-      if (!movieId) {
-        console.log('\n💬 短评 - 请指定电影 ID\n');
-        console.log('用法: douban comments <ID>\n');
-        console.log('示例: douban comments 1292052');
-        return;
-      }
       const id = normalizeMovieIdInput(movieId);
       const orderBy = opts.latest ? 'latest' : 'hot';
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
       const page = parsePositiveInt(opts.page, '--page', 1);
 
       if (opts.json) {
-        // JSON 模式：单次输出
+        // JSON mode returns one page without an interactive prompt.
         const start = (page - 1) * limit;
         const { items, total } = await withSpinner(
           `正在获取${opts.latest ? '最新' : '热门'}短评...`,

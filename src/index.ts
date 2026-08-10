@@ -19,7 +19,12 @@ const program = new Command();
 program
   .name('douban')
   .description('豆瓣命令行工具（电影 / 书籍 / 用户）')
-  .version(pkg.version || '0.0.0');
+  .version(pkg.version || '0.0.0')
+  .exitOverride()
+  .configureOutput({
+    // Commander errors are rendered by the shared CLI error handler below.
+    outputError: () => undefined
+  });
 
 program.configureHelp({
   formatHelp: (cmd) => {
@@ -40,6 +45,7 @@ program.configureHelp({
 
     let output = title + usage + '\n';
     const cmds = cmd.commands;
+    const groupedNames = new Set(Object.values(groups).flat());
 
     for (const [group, names] of Object.entries(groups)) {
       const matched = cmds.filter((c) => names.includes(c.name()));
@@ -53,6 +59,15 @@ program.configureHelp({
           .replace(/\[需登录\]\s*\[需登录\]/g, '[需登录]')
           .trim();
         output += `  ${c.name().padEnd(16)} ${desc}\n`;
+      }
+      output += '\n';
+    }
+
+    const ungrouped = cmds.filter((command) => !groupedNames.has(command.name()));
+    if (ungrouped.length > 0) {
+      output += '其他:\n';
+      for (const command of ungrouped) {
+        output += `  ${command.name().padEnd(16)} ${command.description()}\n`;
       }
       output += '\n';
     }

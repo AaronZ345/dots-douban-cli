@@ -10,12 +10,13 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "typecheck:test": "tsc -p tsconfig.test.json",
     "start": "node dist/index.js",
-    "postbuild": "chmod +x dist/index.js",
+    "postbuild": "node scripts/postbuild.mjs",
     "lint": "eslint src",
     "test": "vitest run",
     "test:cli": "node scripts/smoke-cli.mjs",
-    "verify": "npm run lint && npm run typecheck && npm test && npm run build && npm run test:cli",
+    "verify": "npm run lint && npm run typecheck && npm run typecheck:test && npm test && npm run build && npm run test:cli",
     "prepack": "npm run verify"
   },
   "keywords": [

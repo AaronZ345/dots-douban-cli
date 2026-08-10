@@ -18,17 +18,19 @@ interface PaginationOptions<T> {
   prompt?: string;
   interactive?: boolean;
   createReadline?: () => ReadlineLike;
+  writeMessage?: (message: string) => void;
 }
 
 export async function withPagination<T>({
   fetchPage,
   renderPage,
   startPage = 1,
-  prompt = '按回车加载下一页，输入 q 退出: ',
+  prompt = '回车/n 下一页，p 上一页，g <页码> 跳转，q 退出: ',
   interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY),
-  createReadline
+  createReadline,
+  writeMessage = console.log
 }: PaginationOptions<T>): Promise<void> {
-  // Non-interactive mode: just show first page
+  // Non-interactive mode renders exactly one deterministic page.
   if (!interactive) {
     const { items, total, hasMore } = await fetchPage(startPage);
     renderPage(items, startPage, total, hasMore);
@@ -48,28 +50,77 @@ export async function withPagination<T>({
   });
 
   let page = startPage;
+  const cache = new Map<number, PaginationPage<T>>();
+
+  const loadPage = async (targetPage: number): Promise<PaginationPage<T>> => {
+    const cached = cache.get(targetPage);
+    if (cached) return cached;
+
+    const result = await fetchPage(targetPage);
+    cache.set(targetPage, result);
+    return result;
+  };
+
+  const render = async (): Promise<PaginationPage<T>> => {
+    const result = await loadPage(page);
+    renderPage(result.items, page, result.total, result.hasMore);
+    return result;
+  };
 
   try {
+    let current = await render();
+    if (!current.hasMore && page === 1) {
+      return;
+    }
+
     let running = true;
     while (running) {
-      const { items, total, hasMore } = await fetchPage(page);
-      renderPage(items, page, total, hasMore);
-
-      if (items.length === 0 || !hasMore) {
-        break;
-      }
-
+      let answer: string;
       try {
-        const answer = await question(prompt);
-        if (answer.toLowerCase() === 'q') {
-          running = false;
-        } else {
-          page++;
-        }
+        answer = (await question(prompt)).trim().toLowerCase();
       } catch {
-        // readline closed (e.g., piped input ended)
+        // Piped input can close while readline is waiting.
         break;
       }
+
+      if (answer === 'q') {
+        running = false;
+        continue;
+      }
+
+      if (answer === '' || answer === 'n') {
+        if (!current.hasMore) {
+          writeMessage('已到最后一页');
+          continue;
+        }
+        page += 1;
+        current = await render();
+        continue;
+      }
+
+      if (answer === 'p') {
+        if (page === 1) {
+          writeMessage('已经是第一页');
+          continue;
+        }
+        page -= 1;
+        current = await render();
+        continue;
+      }
+
+      const jump = answer.match(/^g\s+(\d+)$/);
+      if (jump) {
+        const targetPage = Number.parseInt(jump[1], 10);
+        if (targetPage < 1) {
+          writeMessage('页码必须从 1 开始');
+          continue;
+        }
+        page = targetPage;
+        current = await render();
+        continue;
+      }
+
+      writeMessage('无效操作。请使用回车/n、p、g <页码> 或 q。');
     }
   } finally {
     rl.close();
