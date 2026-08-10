@@ -21,9 +21,17 @@ Douban CLI - browse movies, TV shows, books, and personal collections from the t
 - `reviews` 热门影评
 
 ### Books / 书籍
-- `book hot` 热门书籍
-- `book search` 搜索书籍
-- `book info` 书籍详情
+- `book hot` 热门书籍（兼容旧版，等同 Top250）
+- `book chart` 当前热门图书榜（支持分类）
+- `book top250` 豆瓣图书 Top250
+- `book new` 新书速递（支持分类）
+- `book tag` 按标签与排序浏览
+- `book search` 按书名、作者或 ISBN 搜索
+- `book info` 书籍详情（支持 ID、ISBN 或关键词）
+- `book rating` 评分分布与想读/在读/读过统计
+- `book comments` 热门/最新短评
+- `book reviews` 热门书评
+- `book notes` 读书笔记
 
 ### User / 用户
 - `user` 指定用户片单
@@ -94,9 +102,18 @@ douban reviews 1291546 --limit 5
 ### 书籍
 
 ```bash
-douban book hot --limit 10
-douban book search "三体"
-douban book info 2567698
+douban book chart 小说 --limit 10
+douban book hot --start 25 --limit 10
+douban book top250 --limit 20
+douban book new 科学新知
+douban book tag 科幻 --sort 评价
+douban book search "三体" --limit 20
+douban book info 三体
+douban book info 9787536692930
+douban book rating 三体
+douban book comments 三体 --latest
+douban book reviews 三体 --limit 5
+douban book notes 三体 --limit 5
 ```
 
 ### 用户与配置

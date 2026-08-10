@@ -27,9 +27,9 @@ npm i -g @marvae24/douban-cli
 | "想看科幻/动作/悬疑片" | `douban rank 科幻` / `动作` / `悬疑` |
 | "XX电影怎么样" / "介绍一下XX" | 先 `douban search XX` 拿 ID，再 `douban movie <id>` |
 | "XX电影评价如何" | `douban comments <id>` 看短评，`douban reviews <id>` 看长评 |
-| "XX是谁演的" / "这个导演还拍过什么" | `douban celebrity <id>` |
-| "有什么好书" | `douban book hot` |
-| "这本书怎么样" | `douban book search XX`，再 `douban book info <id>` |
+| "有什么好书" | `douban book chart`、`douban book top250` 或 `douban book tag <标签>` |
+| "最近出了什么书" | `douban book new` |
+| "这本书怎么样" | `douban book info <书名或ISBN>`，再看 `book rating/comments/reviews` |
 | "我看过的电影" / "我的片单" | `douban me`（需登录） |
 | "帮我标记看过/想看" | `douban mark <id> --watched` / `--wish`（需登录） |
 | "导出我的观影记录" | `douban export --format csv -o records.csv`（需登录） |
@@ -71,15 +71,22 @@ douban comment --file comments.txt --delay 3   # 批量短评（每行: ID,评�
 | `douban comments <id>` | 热门短评。`--latest` 按时间排序 |
 | `douban reviews <id>` | 热门影评 |
 | `douban rating <id>` | 评分分布（星级柱状图） |
-| `douban celebrity <id>` | 影人详情（演员/导演） |
 
 ### 书籍（无需登录）
 
 | 命令 | 说明 |
 |-----|------|
-| `douban book hot` | 热门书籍 Top 250 |
-| `douban book search <关键词>` | 搜索书籍 |
-| `douban book info <id>` | 书籍详情 |
+| `douban book hot` | 热门书籍（兼容旧版，等同 Top250） |
+| `douban book chart [分类]` | 当前热门图书榜 |
+| `douban book top250` | 豆瓣图书 Top250 |
+| `douban book new [分类]` | 新书速递 |
+| `douban book tag <标签>` | 按标签浏览，支持综合/出版/评价排序 |
+| `douban book search <关键词>` | 按书名、作者或 ISBN 搜索 |
+| `douban book info <ID/ISBN/关键词>` | 书籍详情 |
+| `douban book rating <ID/ISBN/关键词>` | 评分分布与阅读状态统计 |
+| `douban book comments <ID/ISBN/关键词>` | 热门/最新短评 |
+| `douban book reviews <ID/ISBN/关键词>` | 热门书评 |
+| `douban book notes <ID/ISBN/关键词>` | 读书笔记 |
 
 ### 用户与配置
 

@@ -1,4 +1,13 @@
 import { BASE, cleanText, extractField, fetchHtml, fetchJson, isChallengePage, normalizeTitle } from './common.js';
+import {
+  getSubjectComments,
+  getSubjectRatingStats,
+  getSubjectReviews,
+  type SubjectCommentItem,
+  type SubjectPaginatedResult,
+  type SubjectRatingStats,
+  type SubjectReviewItem
+} from './subject.js';
 import { debug } from '../utils/debug.js';
 
 interface Subject {
@@ -62,31 +71,9 @@ export interface WeeklyItem {
   url: string;
 }
 
-export interface ReviewItem {
-  id: string;
-  user: string;
-  rating: string;
-  votes: number;
-  time: string;
-  content: string;
-  url: string;
-}
-
-export interface CommentItem {
-  id: string;
-  user: string;
-  avatar: string;
-  rating: number;
-  votes: number;
-  time: string;
-  content: string;
-  url: string;
-}
-
-export interface PaginatedResult<T> {
-  items: T[];
-  total: number;
-}
+export type ReviewItem = SubjectReviewItem;
+export type CommentItem = SubjectCommentItem;
+export type PaginatedResult<T> = SubjectPaginatedResult<T>;
 
 function sanitizeList(values: unknown[]): string[] {
   const seen = new Set<string>();
@@ -209,6 +196,9 @@ function parseMovieDetailFromHtml(id: string, html: string): MovieDetail | null 
   const aka = splitSlashList(extractField(infoHtml, '又名'));
   const durationsFromInfo = splitSlashList(extractField(infoHtml, '片长'));
   const pubdateFromInfo = splitSlashList(extractField(infoHtml, '上映日期'));
+  const episodesInfo = extractField(infoHtml, '集数');
+  const episodesCountMatch = episodesInfo.match(/\d+/);
+  const episodesCount = episodesCountMatch ? Number(episodesCountMatch[0]) : 0;
 
   return {
     id,
@@ -227,7 +217,9 @@ function parseMovieDetailFromHtml(id: string, html: string): MovieDetail | null 
     comment_count: extractCountByPath(html, 'comments'),
     review_count: extractCountByPath(html, 'reviews'),
     summary,
-    url: `${BASE}/subject/${id}/`
+    url: `${BASE}/subject/${id}/`,
+    episodes_count: episodesCount > 0 ? episodesCount : undefined,
+    episodes_info: episodesInfo || undefined
   };
 }
 
@@ -445,7 +437,7 @@ export async function getMovieDetail(id: string): Promise<MovieDetail> {
 /**
  * Get hot/trending by tag
  * @param type - 'movie' or 'tv'
- * @param tag - '热门', '美剧', '日剧', '韩剧', '国产剧', '综艺', '最新' etc.
+ * @param tag - A Douban category such as trending, US TV, Japanese TV, or latest.
  * @param limit - number of results
  */
 export async function getHot(type: 'movie' | 'tv', tag: string, limit = 20): Promise<Subject[]> {
@@ -457,7 +449,7 @@ export async function getHot(type: 'movie' | 'tv', tag: string, limit = 20): Pro
 
 /**
  * Get ranked list by genre type
- * @param typeId - genre type ID (17=科幻, 5=动作, 13=爱情, 25=动画, 10=悬疑, etc.)
+ * @param typeId - Douban genre ID (for example: 17=science fiction, 5=action, 13=romance).
  * @param limit - number of results
  */
 export async function getRank(typeId: number, limit = 20): Promise<RankItem[]> {
@@ -672,47 +664,7 @@ export async function getWeekly(limit = 10): Promise<WeeklyItem[]> {
  * Get movie reviews (long-form) from mobile API.
  */
 export async function getReviews(movieId: string, start = 0, limit = 20): Promise<PaginatedResult<ReviewItem>> {
-  const id = movieId.trim();
-  if (!/^\d+$/.test(id)) throw new Error('电影 ID 必须是纯数字');
-  if (!Number.isFinite(start) || start < 0) throw new Error('start 必须是非负整数');
-  if (!Number.isFinite(limit) || limit <= 0) return { items: [], total: 0 };
-
-  interface ReviewResponse {
-    total?: number;
-    reviews?: Array<{
-      id?: string;
-      title?: string;
-      abstract?: string;
-      rating?: { value?: number };
-      useful_count?: number;
-      create_time?: string;
-      user?: { name?: string };
-      url?: string;
-    }>;
-  }
-
-  const url = `https://m.douban.com/rexxar/api/v2/movie/${id}/reviews?count=${limit}&start=${start}`;
-  const data = await fetchJson<ReviewResponse>(url, {
-    Referer: `https://m.douban.com/movie/subject/${id}/`
-  });
-
-  const items = Array.isArray(data.reviews)
-    ? data.reviews.map((item) => ({
-      id: item.id || '',
-      user: item.user?.name || '匿名',
-      rating: item.rating?.value ? String(item.rating.value) : '-',
-      votes: item.useful_count || 0,
-      time: item.create_time || '',
-      content: `【${item.title || '无标题'}】${item.abstract || ''}`,
-      url: item.url || `https://movie.douban.com/review/${item.id}/`
-    }))
-    : [];
-
-  const total = typeof data.total === 'number' && Number.isFinite(data.total) && data.total >= 0
-    ? data.total
-    : items.length;
-
-  return { items, total };
+  return getSubjectReviews('movie', movieId, start, limit);
 }
 
 // City code mapping
@@ -727,98 +679,14 @@ export const CITIES: Record<string, string> = {
  * order_by: 'hot' (default) or 'latest'
  */
 export async function getComments(movieId: string, orderBy: 'hot' | 'latest' = 'hot', start = 0, count = 20): Promise<PaginatedResult<CommentItem>> {
-  const id = movieId.trim();
-  if (!/^\d+$/.test(id)) throw new Error('电影 ID 必须是纯数字');
-  if (!Number.isFinite(start) || start < 0) throw new Error('start 必须是非负整数');
-  if (!Number.isFinite(count) || count <= 0) return { items: [], total: 0 };
-
-  interface Interest {
-    id: string;
-    comment?: string;
-    rating?: { value?: number };
-    vote_count?: number;
-    create_time?: string;
-    user?: {
-      name?: string;
-      avatar?: string;
-    };
-  }
-
-  const url = `https://m.douban.com/rexxar/api/v2/movie/${id}/interests?count=${count}&start=${start}&order_by=${orderBy}`;
-  const data = await fetchJson<{ total?: number; interests?: Interest[] }>(url, {
-    Referer: `https://m.douban.com/movie/subject/${id}/`
-  });
-
-  const items = Array.isArray(data.interests)
-    ? data.interests
-      .filter((item) => item.comment)
-      .map((item) => ({
-        id: item.id || '',
-        user: item.user?.name || '匿名',
-        avatar: item.user?.avatar || '',
-        rating: item.rating?.value || 0,
-        votes: item.vote_count || 0,
-        time: item.create_time || '',
-        content: item.comment || '',
-        url: `https://www.douban.com/doubanapp/dispatch?uri=/movie/${id}/interest/${item.id}`
-      }))
-    : [];
-
-  const total = typeof data.total === 'number' && Number.isFinite(data.total) && data.total >= 0
-    ? data.total
-    : items.length;
-
-  return { items, total };
+  return getSubjectComments('movie', movieId, orderBy, start, count);
 }
 
-export interface RatingStats {
-  value: number;
-  count: number;
-  stars: number[];
-  wish_count: number;
-  done_count: number;
-  type_ranks: Array<{ type: string; rank: number }>;
-}
+export type RatingStats = SubjectRatingStats;
 
 /**
  * Get movie rating statistics including distribution.
  */
 export async function getRatingStats(movieId: string): Promise<RatingStats> {
-  const id = movieId.trim();
-  if (!/^\d+$/.test(id)) throw new Error('电影 ID 必须是纯数字');
-
-  interface RatingResponse {
-    stats?: number[];
-    wish_count?: number;
-    done_count?: number;
-    type_ranks?: Array<{ type: string; rank: number }>;
-  }
-
-  interface MovieResponse {
-    rating?: { value?: number; count?: number };
-  }
-
-  const [ratingData, movieData] = await Promise.all([
-    fetchJson<RatingResponse>(`https://m.douban.com/rexxar/api/v2/movie/${id}/rating?for_mobile=1`, {
-      Referer: `https://m.douban.com/movie/subject/${id}/`
-    }),
-    fetchJson<MovieResponse>(`https://m.douban.com/rexxar/api/v2/movie/${id}?for_mobile=1`, {
-      Referer: `https://m.douban.com/movie/subject/${id}/`
-    })
-  ]);
-
-  const rawStats = Array.isArray(ratingData.stats) ? ratingData.stats : [];
-  const stats = new Array<number>(5).fill(0).map((_, index) => {
-    const value = rawStats[index];
-    return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-  });
-
-  return {
-    value: movieData.rating?.value || 0,
-    count: movieData.rating?.count || 0,
-    stars: stats.map((s) => Math.round(s * 1000) / 10),
-    wish_count: ratingData.wish_count || 0,
-    done_count: ratingData.done_count || 0,
-    type_ranks: ratingData.type_ranks || []
-  };
+  return getSubjectRatingStats('movie', movieId);
 }
