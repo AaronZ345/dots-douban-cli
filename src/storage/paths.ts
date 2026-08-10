@@ -19,7 +19,9 @@ function absoluteEnvironmentPath(
   pathApi: typeof path.posix
 ): string | undefined {
   const candidate = value?.trim();
-  return candidate && pathApi.isAbsolute(candidate) ? pathApi.normalize(candidate) : undefined;
+  return candidate && !candidate.includes('\0') && pathApi.isAbsolute(candidate)
+    ? pathApi.normalize(candidate)
+    : undefined;
 }
 
 export function resolveCliStoragePaths(
@@ -27,19 +29,29 @@ export function resolveCliStoragePaths(
 ): CliStoragePaths {
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
-  const homedir = options.homedir ?? os.homedir();
+  const rawHomedir = options.homedir ?? os.homedir();
   const pathApi = platform === 'win32' ? path.win32 : path.posix;
   const override = env.DOUBAN_CLI_HOME?.trim();
+  const homedir = absoluteEnvironmentPath(rawHomedir, pathApi);
 
-  if (override && !pathApi.isAbsolute(override)) {
+  if (!homedir) {
+    throw new Error('用户主目录必须是绝对路径');
+  }
+
+  if (override && (override.includes('\0') || !pathApi.isAbsolute(override))) {
     throw new Error('DOUBAN_CLI_HOME 必须是绝对路径');
+  }
+
+  const normalizedOverride = override ? pathApi.normalize(override) : undefined;
+  if (normalizedOverride && normalizedOverride === pathApi.parse(normalizedOverride).root) {
+    throw new Error('DOUBAN_CLI_HOME 不能指向文件系统根目录');
   }
 
   let authDirectory: string;
   let configDirectory: string;
 
-  if (override) {
-    authDirectory = pathApi.normalize(override);
+  if (normalizedOverride) {
+    authDirectory = normalizedOverride;
     configDirectory = authDirectory;
   } else if (platform === 'darwin') {
     authDirectory = pathApi.join(homedir, 'Library', 'Application Support', 'douban-cli');

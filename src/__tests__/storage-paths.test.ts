@@ -21,6 +21,22 @@ describe('CLI storage paths', () => {
     })).toThrow('DOUBAN_CLI_HOME 必须是绝对路径');
   });
 
+  it('rejects a filesystem root as DOUBAN_CLI_HOME', () => {
+    expect(() => resolveCliStoragePaths({
+      platform: 'linux',
+      homedir: '/home/alice',
+      env: { DOUBAN_CLI_HOME: '/' }
+    })).toThrow('不能指向文件系统根目录');
+  });
+
+  it('rejects an invalid home directory before constructing legacy paths', () => {
+    expect(() => resolveCliStoragePaths({
+      platform: 'linux',
+      homedir: 'home/alice',
+      env: {}
+    })).toThrow('用户主目录必须是绝对路径');
+  });
+
   it('uses Application Support on macOS', () => {
     const paths = resolveCliStoragePaths({
       platform: 'darwin',

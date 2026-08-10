@@ -94,8 +94,12 @@ describe.sequential('authentication safety', () => {
 
     const cachePath = authCachePath();
     const cacheText = readFileSync(cachePath, 'utf8');
+    const cachePayload = JSON.parse(cacheText) as Record<string, unknown>;
     expect(cacheText).not.toContain('browser-secret');
     expect(cacheText).not.toContain('csrf-secret');
+    expect(cachePayload).toMatchObject({ version: 2 });
+    expect(cachePayload).not.toHaveProperty('source');
+    expect(cachePayload).not.toHaveProperty('updatedAt');
     expect(lstatSync(cachePath).mode & 0o777).toBe(0o600);
     expect(lstatSync(path.dirname(cachePath)).mode & 0o777).toBe(0o700);
   });
@@ -155,6 +159,7 @@ describe.sequential('authentication safety', () => {
   });
 
   it.each([
+    ['array result', []],
     ['invalid result shape', { cookies: 'not-an-array', warnings: [] }],
     ['non-string warning', {
       cookies: [{ name: 'dbcl2', value: 'must-not-be-used', source: { browser: 'chrome' } }],
@@ -194,6 +199,22 @@ describe.sequential('authentication safety', () => {
     for (const call of fetchMock.mock.calls) {
       expect(new Headers(call[1]?.headers).get('Cookie')).toBe('dbcl2=default-account');
     }
+    expect(existsSync(authCachePath())).toBe(false);
+  });
+
+  it('rejects cookie values that could inject additional header fields', async () => {
+    const reader = vi.fn().mockResolvedValue({
+      cookies: [{ name: 'dbcl2', value: 'secret\r\nX-Test: injected', source: { browser: 'chrome' } }],
+      warnings: []
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const auth = await import('../auth.ts');
+
+    await expect(auth.loginFromBrowserCookies({ browser: 'chrome' }, reader))
+      .rejects.toThrow('未找到可验证的豆瓣登录态');
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(existsSync(authCachePath())).toBe(false);
   });
 
@@ -290,6 +311,24 @@ describe.sequential('authentication safety', () => {
     expect(existsSync(legacyAuthCachePath())).toBe(false);
   });
 
+  it('continues reading version 1 encrypted caches', async () => {
+    const reader = vi.fn().mockResolvedValue({
+      cookies: [{ name: 'dbcl2', value: 'legacy-schema-secret', source: { browser: 'chrome' } }],
+      warnings: []
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(profileHtml('alice', 'Alice'), { status: 200 })));
+    const auth = await import('../auth.ts');
+    await auth.loginFromBrowserCookies({ browser: 'chrome' }, reader);
+
+    const cachePayload = JSON.parse(readFileSync(authCachePath(), 'utf8')) as Record<string, unknown>;
+    cachePayload.version = 1;
+    cachePayload.source = 'Chrome';
+    cachePayload.updatedAt = new Date().toISOString();
+    writeFileSync(authCachePath(), `${JSON.stringify(cachePayload)}\n`, { mode: 0o600 });
+
+    await expect(auth.detectAuthSession()).resolves.toMatchObject({ accountId: 'alice' });
+  });
+
   it('keeps using the legacy cache when migration cannot create the new path', async () => {
     const reader = vi.fn().mockResolvedValue({
       cookies: [{ name: 'dbcl2', value: 'legacy-secret', source: { browser: 'chrome' } }],
@@ -323,6 +362,35 @@ describe.sequential('authentication safety', () => {
 
     await expect(auth.detectAuthSession()).resolves.toMatchObject({ accountId: 'alice' });
     expect(existsSync(legacyAuthCachePath())).toBe(false);
+  });
+
+  it('recovers a valid legacy cache after removing an invalid current cache', async () => {
+    const reader = vi.fn().mockResolvedValue({
+      cookies: [{ name: 'dbcl2', value: 'legacy-secret', source: { browser: 'chrome' } }],
+      warnings: []
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(profileHtml('alice', 'Alice'), { status: 200 })));
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const auth = await import('../auth.ts');
+    await auth.loginFromBrowserCookies({ browser: 'chrome' }, reader);
+    renameSync(authCachePath(), legacyAuthCachePath());
+    mkdirSync(path.dirname(authCachePath()), { recursive: true });
+    writeFileSync(authCachePath(), '{broken-current-cache', { mode: 0o600 });
+
+    await expect(auth.detectAuthSession()).resolves.toMatchObject({ accountId: 'alice' });
+    expect(existsSync(authCachePath())).toBe(true);
+    expect(existsSync(legacyAuthCachePath())).toBe(false);
+  });
+
+  it('does not delete a cache path when the failure is not a cache-format error', async () => {
+    mkdirSync(authCachePath(), { recursive: true });
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const auth = await import('../auth.ts');
+
+    await expect(auth.detectAuthSession()).resolves.toBeNull();
+    expect(lstatSync(authCachePath()).isDirectory()).toBe(true);
+    expect(stderr.mock.calls.map((call) => String(call[0])).join('\n'))
+      .toContain('登录缓存不是普通文件');
   });
 
   it('expires auth from updatedAt even when the cache mtime is fresh', async () => {

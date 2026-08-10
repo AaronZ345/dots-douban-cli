@@ -30,13 +30,19 @@ function assertSafeTarget(filePath: string): void {
   }
 }
 
+function isUnsupportedDirectorySyncError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === 'EINVAL' || code === 'ENOTSUP' || code === 'EISDIR'
+    || (process.platform === 'win32' && code === 'EPERM');
+}
+
 function syncDirectory(directory: string): void {
   let fd: number | undefined;
   try {
     fd = openSync(directory, constants.O_RDONLY);
     fsyncSync(fd);
-  } catch {
-    // Directory fsync is not available on every supported filesystem.
+  } catch (error) {
+    if (!isUnsupportedDirectorySyncError(error)) throw error;
   } finally {
     if (typeof fd === 'number') {
       try {

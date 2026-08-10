@@ -29,9 +29,9 @@ export interface VerifiedAuthSession extends AuthSession {
 }
 
 interface EncryptedAuthCache {
-  version: 1;
-  source: string;
-  updatedAt: string;
+  version: 1 | 2;
+  source?: string;
+  updatedAt?: string;
   salt: string;
   iv: string;
   tag: string;
@@ -39,6 +39,7 @@ interface EncryptedAuthCache {
 }
 
 const DOUBAN_LOGIN_URL = 'https://accounts.douban.com/passport/login';
+const AUTH_CACHE_MAX_BYTES = 64 * 1024;
 const AUTH_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const AUTH_CACHE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
@@ -50,14 +51,44 @@ export interface LoginOptions {
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+class InvalidAuthCacheError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'InvalidAuthCacheError';
+  }
+}
+
+function normalizeAuthCookieValue(value: string, stripQuotes = false): string | null {
+  const trimmed = value.trim();
+  const startsWithQuote = trimmed.startsWith('"');
+  const endsWithQuote = trimmed.endsWith('"');
+  if (stripQuotes && startsWithQuote !== endsWithQuote) return null;
+
+  const normalized = stripQuotes && startsWithQuote
+    ? trimmed.slice(1, -1).trim()
+    : trimmed;
+  const hasInvalidCharacters = [...normalized].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f || character === ';';
+  });
+  return normalized && !hasInvalidCharacters ? normalized : null;
+}
+
+function normalizeDisplayText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  return stripControlCharacters(value) || undefined;
 }
 
 function parseEncryptedAuthCache(raw: unknown): EncryptedAuthCache | null {
   const obj = asObject(raw);
   if (!obj) return null;
 
-  if (obj.version !== 1) return null;
+  if (obj.version !== 1 && obj.version !== 2) return null;
 
   const source = typeof obj.source === 'string' ? obj.source : '';
   const updatedAt = typeof obj.updatedAt === 'string' ? obj.updatedAt : '';
@@ -66,12 +97,12 @@ function parseEncryptedAuthCache(raw: unknown): EncryptedAuthCache | null {
   const tag = typeof obj.tag === 'string' ? obj.tag : '';
   const data = typeof obj.data === 'string' ? obj.data : '';
 
-  if (!source || !updatedAt || !salt || !iv || !tag || !data) return null;
+  if (obj.version === 1 && (!source || !updatedAt)) return null;
+  if (!salt || !iv || !tag || !data) return null;
 
   return {
-    version: 1,
-    source,
-    updatedAt,
+    version: obj.version,
+    ...(obj.version === 1 ? { source, updatedAt } : {}),
     salt,
     iv,
     tag,
@@ -83,13 +114,17 @@ function parseAuthSession(raw: unknown): AuthSession | null {
   const obj = asObject(raw);
   if (!obj) return null;
 
-  const dbcl2 = typeof obj.dbcl2 === 'string' ? obj.dbcl2.trim() : '';
+  const dbcl2 = typeof obj.dbcl2 === 'string'
+    ? normalizeAuthCookieValue(obj.dbcl2, true)
+    : null;
   if (!dbcl2) return null;
 
-  const ck = typeof obj.ck === 'string' && obj.ck.trim() ? obj.ck.trim() : undefined;
-  const source = typeof obj.source === 'string' && obj.source.trim() ? obj.source.trim() : 'Browser';
-  const accountId = typeof obj.accountId === 'string' && obj.accountId.trim() ? obj.accountId.trim() : undefined;
-  const accountName = typeof obj.accountName === 'string' && obj.accountName.trim() ? obj.accountName.trim() : undefined;
+  const ck = typeof obj.ck === 'string'
+    ? normalizeAuthCookieValue(obj.ck) ?? undefined
+    : undefined;
+  const source = normalizeDisplayText(obj.source) ?? 'Browser';
+  const accountId = normalizeDisplayText(obj.accountId);
+  const accountName = normalizeDisplayText(obj.accountName);
   const updatedAt = typeof obj.updatedAt === 'string' ? obj.updatedAt.trim() : '';
   if (!updatedAt) return null;
   const cookies = buildCookieHeader(dbcl2, ck);
@@ -110,53 +145,73 @@ function machineSecret(): Buffer {
   return createHash('sha256').update(payload).digest();
 }
 
+function deriveCacheKey(salt: Buffer): Buffer {
+  const secret = machineSecret();
+  try {
+    return pbkdf2Sync(secret, salt, 120000, 32, 'sha256');
+  } finally {
+    secret.fill(0);
+  }
+}
+
 function encryptCache(auth: AuthSession): EncryptedAuthCache {
   const salt = randomBytes(16);
   const iv = randomBytes(12);
-  const key = pbkdf2Sync(machineSecret(), salt, 120000, 32, 'sha256');
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const key = deriveCacheKey(salt);
   const plaintext = Buffer.from(JSON.stringify(auth), 'utf8');
-  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
-  const tag = cipher.getAuthTag();
+  try {
+    const cipher = createCipheriv('aes-256-gcm', key, iv);
+    const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const tag = cipher.getAuthTag();
 
-  return {
-    version: 1,
-    source: auth.source,
-    updatedAt: auth.updatedAt,
-    salt: salt.toString('base64'),
-    iv: iv.toString('base64'),
-    tag: tag.toString('base64'),
-    data: ciphertext.toString('base64')
-  };
+    return {
+      version: 2,
+      salt: salt.toString('base64'),
+      iv: iv.toString('base64'),
+      tag: tag.toString('base64'),
+      data: ciphertext.toString('base64')
+    };
+  } finally {
+    plaintext.fill(0);
+    key.fill(0);
+  }
 }
 
-function decryptCache(payload: EncryptedAuthCache): AuthSession | null {
-  try {
-    const salt = Buffer.from(payload.salt, 'base64');
-    const iv = Buffer.from(payload.iv, 'base64');
-    const tag = Buffer.from(payload.tag, 'base64');
-    const data = Buffer.from(payload.data, 'base64');
-    const key = pbkdf2Sync(machineSecret(), salt, 120000, 32, 'sha256');
+function decryptCache(payload: EncryptedAuthCache): AuthSession {
+  const salt = Buffer.from(payload.salt, 'base64');
+  const iv = Buffer.from(payload.iv, 'base64');
+  const tag = Buffer.from(payload.tag, 'base64');
+  const data = Buffer.from(payload.data, 'base64');
+  const key = deriveCacheKey(salt);
+  let plaintext: Buffer | undefined;
 
+  try {
     const decipher = createDecipheriv('aes-256-gcm', key, iv);
     decipher.setAuthTag(tag);
-    const plaintext = Buffer.concat([decipher.update(data), decipher.final()]);
+    plaintext = Buffer.concat([decipher.update(data), decipher.final()]);
     const decoded = JSON.parse(plaintext.toString('utf8')) as unknown;
-    return parseAuthSession(decoded);
+    const session = parseAuthSession(decoded);
+    if (!session) throw new InvalidAuthCacheError('登录缓存内容无效');
+    return session;
   } catch (error) {
-    reportRecoverableError('解密登录缓存失败', error);
-    return null;
+    if (error instanceof InvalidAuthCacheError) throw error;
+    throw new InvalidAuthCacheError('登录缓存无法解密', { cause: error });
+  } finally {
+    plaintext?.fill(0);
+    key.fill(0);
   }
 }
 
 function decodeAuthCache(contents: string): AuthSession {
-  const raw = JSON.parse(contents) as unknown;
-  const parsed = parseEncryptedAuthCache(raw);
-  if (!parsed) throw new Error('登录缓存格式无效');
-
-  const session = decryptCache(parsed);
-  if (!session) throw new Error('登录缓存无法解密');
-  return session;
+  try {
+    const raw = JSON.parse(contents) as unknown;
+    const parsed = parseEncryptedAuthCache(raw);
+    if (!parsed) throw new InvalidAuthCacheError('登录缓存格式无效');
+    return decryptCache(parsed);
+  } catch (error) {
+    if (error instanceof InvalidAuthCacheError) throw error;
+    throw new InvalidAuthCacheError('登录缓存不是有效的 JSON', { cause: error });
+  }
 }
 
 function isExpiredAuthSession(session: AuthSession): boolean {
@@ -164,6 +219,14 @@ function isExpiredAuthSession(session: AuthSession): boolean {
   if (!Number.isFinite(updatedAt)) return true;
   const age = Date.now() - updatedAt;
   return age > AUTH_CACHE_MAX_AGE_MS || age < -AUTH_CACHE_CLOCK_SKEW_MS;
+}
+
+function unlinkIfExists(filePath: string): void {
+  try {
+    unlinkSync(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
 }
 
 function readAuthCache(): AuthSession | null {
@@ -180,6 +243,15 @@ function readAuthCache(): AuthSession | null {
       }
     );
   } catch (error) {
+    if (error instanceof InvalidAuthCacheError) {
+      reportRecoverableError('旧登录缓存无效，已忽略', error);
+      try {
+        unlinkIfExists(storagePaths.legacyAuthCachePath);
+      } catch (unlinkError) {
+        reportRecoverableError('清理无效旧登录缓存失败', unlinkError);
+      }
+      return null;
+    }
     migrationFailed = true;
     cachePath = storagePaths.legacyAuthCachePath;
     reportRecoverableError('迁移登录缓存失败，继续使用旧缓存', error);
@@ -193,29 +265,31 @@ function readAuthCache(): AuthSession | null {
     if (!stat.isFile()) {
       throw new Error('登录缓存不是普通文件');
     }
+    if (stat.size > AUTH_CACHE_MAX_BYTES) {
+      throw new InvalidAuthCacheError('登录缓存文件过大');
+    }
     if ((stat.mode & 0o077) !== 0) chmodSync(cachePath, 0o600);
 
     const session = decodeAuthCache(readFileSync(cachePath, 'utf8'));
     if (isExpiredAuthSession(session)) {
-      clearAuthCache();
+      unlinkIfExists(cachePath);
       return null;
     }
     if (!migrationFailed && cachePath !== storagePaths.legacyAuthCachePath) {
       try {
-        unlinkSync(storagePaths.legacyAuthCachePath);
+        unlinkIfExists(storagePaths.legacyAuthCachePath);
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-          reportRecoverableError('清理旧登录缓存失败', error);
-        }
+        reportRecoverableError('清理旧登录缓存失败', error);
       }
     }
     return session;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     reportRecoverableError('读取登录缓存失败', error);
-    if (!migrationFailed) {
+    if (!migrationFailed && error instanceof InvalidAuthCacheError) {
       try {
-        clearAuthCache();
+        unlinkIfExists(cachePath);
+        return readAuthCache();
       } catch (clearError) {
         reportRecoverableError('清理无效登录缓存失败', clearError);
       }
@@ -237,21 +311,13 @@ export function clearAuthCache(): void {
 
   for (const cachePath of new Set([authCachePath, legacyAuthCachePath])) {
     try {
-      unlinkSync(cachePath);
+      unlinkIfExists(cachePath);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && firstError === undefined) {
-        firstError = error;
-      }
+      if (firstError === undefined) firstError = error;
     }
   }
 
   if (firstError !== undefined) throw firstError;
-}
-
-export function getCachedAuthSession(clear = false): AuthSession | null {
-  const cached = readAuthCache();
-  if (clear) clearAuthCache();
-  return cached;
 }
 
 function buildCookieHeader(dbcl2: string, ck?: string): string {
@@ -305,6 +371,16 @@ function reportRecoverableError(context: string, error: unknown): void {
   console.error(`[auth] ${context}: ${message}`);
 }
 
+function stripControlCharacters(value: string): string {
+  return [...value]
+    .map((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 0x1f || code === 0x7f ? ' ' : character;
+    })
+    .join('')
+    .trim();
+}
+
 function asBrowserName(value: unknown): BrowserName | undefined {
   return value === 'chrome' || value === 'edge' || value === 'firefox' || value === 'safari'
     ? value
@@ -343,13 +419,7 @@ function parseSweetCookieResult(value: unknown): SweetCookieResult {
 }
 
 function sanitizeCookieWarning(warning: string, cookies: SweetCookieResult['cookies']): string {
-  let sanitized = [...warning]
-    .map((character) => {
-      const code = character.charCodeAt(0);
-      return code <= 0x1f || code === 0x7f ? ' ' : character;
-    })
-    .join('')
-    .trim();
+  let sanitized = stripControlCharacters(warning);
   const secrets = new Set<string>();
 
   for (const cookie of cookies) {
@@ -387,7 +457,17 @@ function normalizeBrowserSource(source: string): string {
 
 function sourceLabel(browser: BrowserName, profile?: string): string {
   const normalized = normalizeBrowserSource(browser);
-  return profile?.trim() ? `${normalized} (${profile.trim()})` : normalized;
+  const safeProfile = profile ? stripControlCharacters(profile) : '';
+  return safeProfile ? `${normalized} (${safeProfile})` : normalized;
+}
+
+function validateLoginOptions(options: LoginOptions): void {
+  if (options.profile && !options.browser) {
+    throw new Error('--profile 必须与 --browser 一起使用');
+  }
+  if (options.profile && options.browser === 'safari') {
+    throw new Error('Safari 不支持 --profile');
+  }
 }
 
 function profileOptions(browser: BrowserName, profile?: string): Partial<SweetCookieOptions> {
@@ -421,10 +501,10 @@ function sessionsFromCookies(
     };
 
     if (cookie.name === 'dbcl2' && !bucket.dbcl2) {
-      bucket.dbcl2 = cookie.value.replace(/^"|"$/g, '').trim();
+      bucket.dbcl2 = normalizeAuthCookieValue(cookie.value, true) ?? undefined;
     }
     if (cookie.name === 'ck' && !bucket.ck) {
-      bucket.ck = cookie.value.trim();
+      bucket.ck = normalizeAuthCookieValue(cookie.value) ?? undefined;
     }
 
     grouped.set(key, bucket);
@@ -453,12 +533,7 @@ async function extractFromBrowsers(
   options: LoginOptions = {},
   reader?: BrowserCookieReader
 ): Promise<AuthSession[]> {
-  if (options.profile && !options.browser) {
-    throw new Error('--profile 必须与 --browser 一起使用');
-  }
-  if (options.profile && options.browser === 'safari') {
-    throw new Error('Safari 不支持 --profile');
-  }
+  validateLoginOptions(options);
 
   const getCookies = reader || await loadBrowserCookieReader();
 
@@ -527,10 +602,15 @@ async function waitForEnter(): Promise<void> {
 
 async function verifyAuthSession(session: AuthSession): Promise<VerifiedAuthSession> {
   const profile = await getCurrentUserProfile(session.cookies);
+  const accountId = stripControlCharacters(profile.id);
+  const accountName = stripControlCharacters(profile.name);
+  if (!accountId || !accountName) {
+    throw new Error('豆瓣账号信息无效');
+  }
   return {
     ...session,
-    accountId: profile.id,
-    accountName: profile.name
+    accountId,
+    accountName
   };
 }
 
@@ -584,12 +664,7 @@ export async function loginFromBrowserCookies(
 }
 
 export async function loginWithBrowser(options: LoginOptions = {}): Promise<VerifiedAuthSession> {
-  if (options.profile && !options.browser) {
-    throw new Error('--profile 必须与 --browser 一起使用');
-  }
-  if (options.profile && options.browser === 'safari') {
-    throw new Error('Safari 不支持 --profile');
-  }
+  validateLoginOptions(options);
 
   openLoginPage();
   await waitForEnter();
