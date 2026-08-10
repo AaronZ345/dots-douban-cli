@@ -6,7 +6,12 @@ import { spawnSync } from 'node:child_process';
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { getCurrentUserProfile } from './api/authenticated.js';
-import { secureAtomicWriteFile } from './storage/secure-file.js';
+import { resolveCliStoragePaths } from './storage/paths.js';
+import {
+  ensurePrivateDirectory,
+  migratePrivateFile,
+  secureAtomicWriteFile
+} from './storage/secure-file.js';
 
 export interface AuthSession {
   dbcl2: string;
@@ -28,8 +33,9 @@ interface EncryptedAuthCache {
   data: string;
 }
 
-const AUTH_CACHE_PATH = path.join(os.homedir(), '.douban-cli-auth.json');
 const DOUBAN_LOGIN_URL = 'https://accounts.douban.com/passport/login';
+const AUTH_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const AUTH_CACHE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 export type BrowserName = 'chrome' | 'edge' | 'firefox' | 'safari';
 
@@ -79,7 +85,8 @@ function parseAuthSession(raw: unknown): AuthSession | null {
   const source = typeof obj.source === 'string' && obj.source.trim() ? obj.source.trim() : 'Browser';
   const accountId = typeof obj.accountId === 'string' && obj.accountId.trim() ? obj.accountId.trim() : undefined;
   const accountName = typeof obj.accountName === 'string' && obj.accountName.trim() ? obj.accountName.trim() : undefined;
-  const updatedAt = typeof obj.updatedAt === 'string' && obj.updatedAt.trim() ? obj.updatedAt.trim() : new Date().toISOString();
+  const updatedAt = typeof obj.updatedAt === 'string' ? obj.updatedAt.trim() : '';
+  if (!updatedAt) return null;
   const cookies = buildCookieHeader(dbcl2, ck);
 
   return {
@@ -137,56 +144,103 @@ function decryptCache(payload: EncryptedAuthCache): AuthSession | null {
   }
 }
 
+function decodeAuthCache(contents: string): AuthSession {
+  const raw = JSON.parse(contents) as unknown;
+  const parsed = parseEncryptedAuthCache(raw);
+  if (!parsed) throw new Error('登录缓存格式无效');
+
+  const session = decryptCache(parsed);
+  if (!session) throw new Error('登录缓存无法解密');
+  return session;
+}
+
+function isExpiredAuthSession(session: AuthSession): boolean {
+  const updatedAt = Date.parse(session.updatedAt);
+  if (!Number.isFinite(updatedAt)) return true;
+  const age = Date.now() - updatedAt;
+  return age > AUTH_CACHE_MAX_AGE_MS || age < -AUTH_CACHE_CLOCK_SKEW_MS;
+}
+
 function readAuthCache(): AuthSession | null {
+  const storagePaths = resolveCliStoragePaths();
+  let cachePath = storagePaths.authCachePath;
+  let migrationFailed = false;
+
   try {
-    const stat = lstatSync(AUTH_CACHE_PATH);
+    migratePrivateFile(
+      storagePaths.legacyAuthCachePath,
+      storagePaths.authCachePath,
+      (contents) => {
+        decodeAuthCache(contents);
+      }
+    );
+  } catch (error) {
+    migrationFailed = true;
+    cachePath = storagePaths.legacyAuthCachePath;
+    reportRecoverableError('迁移登录缓存失败，继续使用旧缓存', error);
+  }
+
+  try {
+    const stat = lstatSync(cachePath);
     if (stat.isSymbolicLink()) {
-      clearAuthCache();
-      return null;
+      throw new Error('登录缓存不能是符号链接');
     }
     if (!stat.isFile()) {
       throw new Error('登录缓存不是普通文件');
     }
-    if ((stat.mode & 0o077) !== 0) chmodSync(AUTH_CACHE_PATH, 0o600);
-    const ageMs = Date.now() - stat.mtimeMs;
-    if (ageMs > 30 * 24 * 60 * 60 * 1000) {
+    if ((stat.mode & 0o077) !== 0) chmodSync(cachePath, 0o600);
+
+    const session = decodeAuthCache(readFileSync(cachePath, 'utf8'));
+    if (isExpiredAuthSession(session)) {
       clearAuthCache();
       return null;
     }
-
-    const raw = JSON.parse(readFileSync(AUTH_CACHE_PATH, 'utf8')) as unknown;
-    const parsed = parseEncryptedAuthCache(raw);
-    if (!parsed) {
-      clearAuthCache();
-      return null;
+    if (!migrationFailed && cachePath !== storagePaths.legacyAuthCachePath) {
+      try {
+        unlinkSync(storagePaths.legacyAuthCachePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          reportRecoverableError('清理旧登录缓存失败', error);
+        }
+      }
     }
-
-    const session = decryptCache(parsed);
-    if (!session) clearAuthCache();
     return session;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     reportRecoverableError('读取登录缓存失败', error);
-    try {
-      clearAuthCache();
-    } catch (clearError) {
-      reportRecoverableError('清理无效登录缓存失败', clearError);
+    if (!migrationFailed) {
+      try {
+        clearAuthCache();
+      } catch (clearError) {
+        reportRecoverableError('清理无效登录缓存失败', clearError);
+      }
     }
     return null;
   }
 }
 
 function saveAuthCache(auth: AuthSession): void {
+  const { authCachePath } = resolveCliStoragePaths();
   const encrypted = encryptCache(auth);
-  secureAtomicWriteFile(AUTH_CACHE_PATH, `${JSON.stringify(encrypted, null, 2)}\n`);
+  ensurePrivateDirectory(path.dirname(authCachePath));
+  secureAtomicWriteFile(authCachePath, `${JSON.stringify(encrypted, null, 2)}\n`);
 }
 
 export function clearAuthCache(): void {
-  try {
-    unlinkSync(AUTH_CACHE_PATH);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  const { authCachePath, legacyAuthCachePath } = resolveCliStoragePaths();
+  let firstError: unknown;
+
+  for (const cachePath of new Set([authCachePath, legacyAuthCachePath])) {
+    try {
+      unlinkSync(cachePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT' && firstError === undefined) {
+        firstError = error;
+      }
+    }
   }
+
+  if (firstError !== undefined) throw firstError;
 }
 
 export function getCachedAuthSession(clear = false): AuthSession | null {
@@ -215,7 +269,7 @@ interface SweetCookieResult {
   cookies: Array<{
     name: string;
     value: string;
-    source?: { browser?: BrowserName; profile?: string };
+    source?: { browser?: BrowserName; profile?: string; storeId?: string };
   }>;
   warnings: string[];
 }
@@ -225,6 +279,7 @@ interface SweetCookieOptions {
   names: string[];
   browsers: BrowserName[];
   mode: 'first';
+  chromiumBrowser?: 'chrome';
   chromeProfile?: string;
   edgeProfile?: string;
   firefoxProfile?: string;
@@ -235,6 +290,7 @@ export type BrowserCookieReader = (options: SweetCookieOptions) => Promise<Sweet
 interface BrowserCookieBucket {
   source: string;
   profile?: string;
+  storeId?: string;
   dbcl2?: string;
   ck?: string;
 }
@@ -242,6 +298,72 @@ interface BrowserCookieBucket {
 function reportRecoverableError(context: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`[auth] ${context}: ${message}`);
+}
+
+function asBrowserName(value: unknown): BrowserName | undefined {
+  return value === 'chrome' || value === 'edge' || value === 'firefox' || value === 'safari'
+    ? value
+    : undefined;
+}
+
+function parseSweetCookieResult(value: unknown): SweetCookieResult {
+  const result = asObject(value);
+  if (!result || !Array.isArray(result.cookies) || !Array.isArray(result.warnings)) {
+    throw new Error('sweet-cookie 返回了无效结果');
+  }
+
+  const cookies: SweetCookieResult['cookies'] = result.cookies.map((value) => {
+    const cookie = asObject(value);
+    if (!cookie || typeof cookie.name !== 'string' || typeof cookie.value !== 'string') {
+      throw new Error('sweet-cookie 返回了无效 Cookie');
+    }
+
+    const rawSource = asObject(cookie.source);
+    const browser = asBrowserName(rawSource?.browser);
+    const source = browser
+      ? {
+          browser,
+          profile: typeof rawSource?.profile === 'string' ? rawSource.profile : undefined,
+          storeId: typeof rawSource?.storeId === 'string' ? rawSource.storeId : undefined
+        }
+      : undefined;
+    return { name: cookie.name, value: cookie.value, source };
+  });
+
+  const warnings = result.warnings.map((warning) => {
+    if (typeof warning !== 'string') throw new Error('sweet-cookie 返回了无效警告');
+    return warning;
+  });
+  return { cookies, warnings };
+}
+
+function sanitizeCookieWarning(warning: string, cookies: SweetCookieResult['cookies']): string {
+  let sanitized = [...warning]
+    .map((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 0x1f || code === 0x7f ? ' ' : character;
+    })
+    .join('')
+    .trim();
+  const secrets = new Set<string>();
+
+  for (const cookie of cookies) {
+    if (cookie.name !== 'dbcl2' && cookie.name !== 'ck') continue;
+    if (cookie.value) secrets.add(cookie.value);
+    const unquoted = cookie.value.replace(/^"|"$/g, '');
+    if (unquoted) secrets.add(unquoted);
+  }
+  for (const secret of secrets) {
+    sanitized = sanitized.split(secret).join('[REDACTED]');
+  }
+  return sanitized;
+}
+
+function reportCookieWarnings(result: SweetCookieResult, browser: BrowserName): void {
+  for (const warning of result.warnings) {
+    const sanitized = sanitizeCookieWarning(warning, result.cookies);
+    if (sanitized) console.error(`[auth] ${normalizeBrowserSource(browser)} Cookie 提示: ${sanitized}`);
+  }
 }
 
 function normalizeBrowserSource(source: string): string {
@@ -285,10 +407,12 @@ function sessionsFromCookies(
 
     const browser = cookie.source?.browser || fallbackBrowser;
     const profile = cookie.source?.profile?.trim() || fallbackProfile?.trim() || undefined;
-    const key = `${browser}:${profile || ''}`;
+    const storeId = cookie.source?.storeId?.trim() || undefined;
+    const key = `${browser}:${profile || ''}:${storeId || ''}`;
     const bucket = grouped.get(key) || {
       source: sourceLabel(browser, profile),
-      profile
+      profile,
+      storeId
     };
 
     if (cookie.name === 'dbcl2' && !bucket.dbcl2) {
@@ -306,13 +430,17 @@ function sessionsFromCookies(
     .map((bucket) => createSession(bucket.dbcl2, bucket.ck, bucket.source));
 }
 
-async function loadBrowserCookieReader(): Promise<BrowserCookieReader | null> {
+async function loadBrowserCookieReader(): Promise<BrowserCookieReader> {
   try {
     const mod = await import('@steipete/sweet-cookie');
+    if (typeof mod.getCookies !== 'function') {
+      throw new Error('sweet-cookie 未导出 getCookies 函数');
+    }
     return mod.getCookies as BrowserCookieReader;
   } catch (error) {
-    reportRecoverableError('加载 sweet-cookie 失败', error);
-    return null;
+    throw new Error(`加载浏览器 Cookie 组件失败: ${error instanceof Error ? error.message : String(error)}`, {
+      cause: error
+    });
   }
 }
 
@@ -328,7 +456,6 @@ async function extractFromBrowsers(
   }
 
   const getCookies = reader || await loadBrowserCookieReader();
-  if (!getCookies) return [];
 
   const browsers: BrowserName[] = options.browser
     ? [options.browser]
@@ -337,13 +464,15 @@ async function extractFromBrowsers(
 
   for (const browser of browsers) {
     try {
-      const result = await getCookies({
+      const result = parseSweetCookieResult(await getCookies({
         url: 'https://www.douban.com',
         names: ['dbcl2', 'ck'],
         browsers: [browser],
         mode: 'first',
+        ...(browser === 'chrome' ? { chromiumBrowser: 'chrome' as const } : {}),
         ...profileOptions(browser, options.profile)
-      });
+      }));
+      reportCookieWarnings(result, browser);
       sessions.push(...sessionsFromCookies(result, browser, options.profile));
     } catch (error) {
       reportRecoverableError(`从 ${normalizeBrowserSource(browser)} 提取 Cookie 失败`, error);
@@ -476,7 +605,9 @@ export async function ensureAuth(): Promise<AuthSession> {
   try {
     verified = await verifyAuthSession(cached);
   } catch (error) {
-    throw new Error(`无法验证本地登录态，已阻止本次操作：${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`无法验证本地登录态，已阻止本次操作：${error instanceof Error ? error.message : String(error)}`, {
+      cause: error
+    });
   }
 
   if (cached.accountId && cached.accountId !== verified.accountId) {

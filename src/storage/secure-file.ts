@@ -7,7 +7,9 @@ import {
   fchmodSync,
   fsyncSync,
   lstatSync,
+  mkdirSync,
   openSync,
+  readFileSync,
   renameSync,
   unlinkSync,
   writeFileSync
@@ -15,6 +17,7 @@ import {
 import path from 'node:path';
 
 const PRIVATE_FILE_MODE = 0o600;
+const PRIVATE_DIRECTORY_MODE = 0o700;
 
 function assertSafeTarget(filePath: string): void {
   try {
@@ -42,6 +45,31 @@ function syncDirectory(directory: string): void {
         // The file contents were already published atomically.
       }
     }
+  }
+}
+
+export function ensurePrivateDirectory(directory: string): void {
+  const targetPath = path.resolve(directory);
+  let existed = false;
+  try {
+    lstatSync(targetPath);
+    existed = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+
+  const createdPath = existed
+    ? undefined
+    : mkdirSync(targetPath, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
+
+  const stat = lstatSync(targetPath);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`Private storage path is not a regular directory: ${targetPath}`);
+  }
+  if (createdPath !== undefined) {
+    chmodSync(targetPath, PRIVATE_DIRECTORY_MODE);
+  } else if (process.platform !== 'win32' && (stat.mode & 0o777) !== PRIVATE_DIRECTORY_MODE) {
+    throw new Error(`Private storage directory is accessible by other users; run chmod 700 "${targetPath}"`);
   }
 }
 
@@ -85,4 +113,42 @@ export function secureAtomicWriteFile(filePath: string, contents: string): void 
     }
     throw error;
   }
+}
+
+export function migratePrivateFile(
+  sourcePath: string,
+  targetPath: string,
+  validate: (contents: string) => void
+): boolean {
+  try {
+    lstatSync(targetPath);
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+
+  let sourceStat;
+  try {
+    sourceStat = lstatSync(sourcePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+  if (sourceStat.isSymbolicLink() || !sourceStat.isFile()) {
+    throw new Error(`Legacy storage path is not a regular file: ${sourcePath}`);
+  }
+  if ((sourceStat.mode & 0o077) !== 0) chmodSync(sourcePath, PRIVATE_FILE_MODE);
+
+  const contents = readFileSync(sourcePath, 'utf8');
+  validate(contents);
+  ensurePrivateDirectory(path.dirname(targetPath));
+  secureAtomicWriteFile(targetPath, contents);
+
+  const persisted = readFileSync(targetPath, 'utf8');
+  if (persisted !== contents) {
+    throw new Error(`Migrated file verification failed: ${targetPath}`);
+  }
+  validate(persisted);
+  unlinkSync(sourcePath);
+  return true;
 }

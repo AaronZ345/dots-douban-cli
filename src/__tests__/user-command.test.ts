@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Command } from 'commander';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const apiMocks = vi.hoisted(() => ({
   getCurrentUserProfile: vi.fn(),
@@ -19,10 +22,20 @@ vi.mock('../utils/spinner.js', () => ({
 import { registerUserCommands } from '../commands/user.ts';
 
 const originalArgv = process.argv;
+const originalHome = process.env.HOME;
+const originalCliHome = process.env.DOUBAN_CLI_HOME;
+const tempDirectories: string[] = [];
 
 afterEach(() => {
   process.argv = originalArgv;
   process.exitCode = undefined;
+  if (originalHome === undefined) delete process.env.HOME;
+  else process.env.HOME = originalHome;
+  if (originalCliHome === undefined) delete process.env.DOUBAN_CLI_HOME;
+  else process.env.DOUBAN_CLI_HOME = originalCliHome;
+  for (const directory of tempDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
   vi.clearAllMocks();
   vi.restoreAllMocks();
 });
@@ -110,5 +123,83 @@ describe('user command', () => {
     const payload = JSON.parse(String(stderr.mock.calls[0]?.[0]));
     expect(payload.error.code).toBe('INVALID_ARGUMENT');
     expect(process.exitCode).toBe(1);
+  });
+
+  it('stores config in a private DOUBAN_CLI_HOME directory', async () => {
+    const tempHome = mkdtempSync(path.join(os.tmpdir(), 'douban-config-'));
+    tempDirectories.push(tempHome);
+    const storageDirectory = path.join(tempHome, 'storage');
+    process.env.HOME = tempHome;
+    process.env.DOUBAN_CLI_HOME = storageDirectory;
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    await createProgram().parseAsync([
+      'node',
+      'douban',
+      'config',
+      '--user',
+      'alice',
+      '--json'
+    ]);
+
+    const configPath = path.join(storageDirectory, 'config.json');
+    expect(JSON.parse(readFileSync(configPath, 'utf8'))).toEqual({ user: 'alice' });
+    expect(lstatSync(storageDirectory).mode & 0o777).toBe(0o700);
+    expect(lstatSync(configPath).mode & 0o777).toBe(0o600);
+  });
+
+  it('migrates the legacy config after validating the new copy', async () => {
+    const tempHome = mkdtempSync(path.join(os.tmpdir(), 'douban-config-'));
+    tempDirectories.push(tempHome);
+    const storageDirectory = path.join(tempHome, 'storage');
+    const legacyPath = path.join(tempHome, '.douban-cli.json');
+    const configPath = path.join(storageDirectory, 'config.json');
+    process.env.HOME = tempHome;
+    process.env.DOUBAN_CLI_HOME = storageDirectory;
+    writeFileSync(legacyPath, '{"user":"legacy-user"}\n');
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    await createProgram().parseAsync(['node', 'douban', 'config', '--json']);
+
+    expect(existsSync(legacyPath)).toBe(false);
+    expect(JSON.parse(readFileSync(configPath, 'utf8'))).toEqual({ user: 'legacy-user' });
+    expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toEqual({ user: 'legacy-user' });
+  });
+
+  it('falls back to a valid legacy config when migration cannot create the new path', async () => {
+    const tempHome = mkdtempSync(path.join(os.tmpdir(), 'douban-config-'));
+    tempDirectories.push(tempHome);
+    const legacyPath = path.join(tempHome, '.douban-cli.json');
+    const blockedParent = path.join(tempHome, 'blocked-parent');
+    process.env.HOME = tempHome;
+    process.env.DOUBAN_CLI_HOME = path.join(blockedParent, 'storage');
+    writeFileSync(legacyPath, '{"user":"legacy-user"}\n');
+    writeFileSync(blockedParent, 'not a directory');
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await createProgram().parseAsync(['node', 'douban', 'config', '--json']);
+
+    expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toEqual({ user: 'legacy-user' });
+    expect(existsSync(legacyPath)).toBe(true);
+    expect(stderr.mock.calls.map((call) => String(call[0])).join('\n'))
+      .toContain('迁移配置失败，继续使用旧配置');
+  });
+
+  it('removes leftover legacy config after validating the current config', async () => {
+    const tempHome = mkdtempSync(path.join(os.tmpdir(), 'douban-config-'));
+    tempDirectories.push(tempHome);
+    const storageDirectory = path.join(tempHome, 'storage');
+    const legacyPath = path.join(tempHome, '.douban-cli.json');
+    process.env.HOME = tempHome;
+    process.env.DOUBAN_CLI_HOME = storageDirectory;
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    await createProgram().parseAsync(['node', 'douban', 'config', '--user', 'current-user', '--json']);
+    writeFileSync(legacyPath, '{"user":"legacy-user"}\n');
+
+    await createProgram().parseAsync(['node', 'douban', 'config', '--json']);
+
+    expect(existsSync(legacyPath)).toBe(false);
+    expect(JSON.parse(String(stdout.mock.calls.at(-1)?.[0]))).toEqual({ user: 'current-user' });
   });
 });

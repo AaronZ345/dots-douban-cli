@@ -282,7 +282,9 @@ douban whoami --json
 ## 🛡️ 登录与隐私
 
 - 公开只读命令不会隐式读取浏览器 Cookie；只有显式运行 `douban login` 才会访问本机浏览器登录态。
-- 登录缓存位于 `~/.douban-cli-auth.json`，使用 AES-256-GCM 加密、文件权限 `0600`，30 天后失效；`douban logout` 会删除本地缓存，不会退出浏览器中的豆瓣账号。
+- 登录缓存使用 AES-256-GCM 加密、文件权限 `0600`，应用目录权限为 `0700`，并按缓存内的 `updatedAt` 在 30 天后失效；`douban logout` 会删除本地缓存，不会退出浏览器中的豆瓣账号。
+- macOS 将登录缓存和配置保存在 `~/Library/Application Support/douban-cli/`；Linux 分别使用 `$XDG_STATE_HOME/douban-cli/` 和 `$XDG_CONFIG_HOME/douban-cli/`（未设置时使用标准默认目录）；Windows 分别使用 `%LOCALAPPDATA%\douban-cli\` 和 `%APPDATA%\douban-cli\`。
+- 可将 `DOUBAN_CLI_HOME` 设为绝对路径，让登录缓存和配置统一存放到指定目录。旧的 `~/.douban-cli-auth.json` 与 `~/.douban-cli.json` 会在验证迁移结果后自动删除。
 - 多浏览器登录不同账号时，请使用 `--browser` 和 `--profile` 明确选择，避免操作错误账号。
 - 导出文件可能包含用户 ID、收藏、评分和短评。请保存到合适的位置，不要误提交到 Git 或上传到公开服务。
 

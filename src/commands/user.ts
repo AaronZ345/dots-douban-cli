@@ -1,6 +1,5 @@
-import os from 'node:os';
 import path from 'node:path';
-import { existsSync, readFileSync } from 'node:fs';
+import { chmodSync, lstatSync, readFileSync, unlinkSync } from 'node:fs';
 import { Command } from 'commander';
 import { getCachedAuthSession } from '../auth.js';
 import { getCurrentUserProfile, getUserCollection, getUserCollectionPage } from '../api/index.js';
@@ -8,7 +7,12 @@ import { withErrorHandler } from '../utils/error.js';
 import { parsePositiveInt } from '../utils/parsing.js';
 import { withSpinner } from '../utils/spinner.js';
 import { withPagination } from '../utils/pagination.js';
-import { secureAtomicWriteFile } from '../storage/secure-file.js';
+import { resolveCliStoragePaths } from '../storage/paths.js';
+import {
+  ensurePrivateDirectory,
+  migratePrivateFile,
+  secureAtomicWriteFile
+} from '../storage/secure-file.js';
 
 type CliConfig = {
   user?: string;
@@ -28,35 +32,70 @@ function resolveCollectionStatus(opts: { wish?: boolean; doing?: boolean }): {
   return { status: 'collect', label: '看过' };
 }
 
-const CONFIG_PATH = path.join(os.homedir(), '.douban-cli.json');
+function parseConfig(content: string): CliConfig {
+  const parsed = JSON.parse(content) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('配置文件必须是 JSON 对象');
+  }
+
+  const maybeUser = (parsed as Record<string, unknown>).user;
+  if (maybeUser !== undefined && typeof maybeUser !== 'string') {
+    throw new Error('配置项 user 必须是字符串');
+  }
+  if (typeof maybeUser === 'string') {
+    const user = maybeUser.trim();
+    return user ? { user } : {};
+  }
+
+  return {};
+}
 
 function readConfig(): CliConfig {
-  if (!existsSync(CONFIG_PATH)) return {};
+  const { configPath, legacyConfigPath } = resolveCliStoragePaths();
+  let selectedPath = configPath;
+  let migrationFailed = false;
+
   try {
-    const content = readFileSync(CONFIG_PATH, 'utf8');
-    const parsed = JSON.parse(content) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      throw new Error('配置文件必须是 JSON 对象');
-    }
-
-    const maybeUser = (parsed as Record<string, unknown>).user;
-    if (maybeUser !== undefined && typeof maybeUser !== 'string') {
-      throw new Error('配置项 user 必须是字符串');
-    }
-    if (typeof maybeUser === 'string') {
-      const user = maybeUser.trim();
-      return user ? { user } : {};
-    }
-
-    return {};
+    migratePrivateFile(legacyConfigPath, configPath, (contents) => {
+      parseConfig(contents);
+    });
   } catch (error) {
+    migrationFailed = true;
+    selectedPath = legacyConfigPath;
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`读取配置失败: ${message}`);
+    console.error(`[config] 迁移配置失败，继续使用旧配置: ${message}`);
+  }
+
+  try {
+    const stat = lstatSync(selectedPath);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      throw new Error('配置文件不是普通文件');
+    }
+    if ((stat.mode & 0o077) !== 0) chmodSync(selectedPath, 0o600);
+    const config = parseConfig(readFileSync(selectedPath, 'utf8'));
+
+    if (!migrationFailed && selectedPath !== legacyConfigPath) {
+      try {
+        unlinkSync(legacyConfigPath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`[config] 清理旧配置失败: ${message}`);
+        }
+      }
+    }
+    return config;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`读取配置失败: ${message}`, { cause: error });
   }
 }
 
 function writeConfig(config: CliConfig): void {
-  secureAtomicWriteFile(CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`);
+  const { configPath } = resolveCliStoragePaths();
+  ensurePrivateDirectory(path.dirname(configPath));
+  secureAtomicWriteFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
 }
 
 export function registerUserCommands(program: Command): void {
@@ -165,7 +204,7 @@ export function registerUserCommands(program: Command): void {
       if (opts.json) {
         console.log(JSON.stringify(current, null, 2));
       } else {
-        console.log(`\n⚙️  配置文件: ${CONFIG_PATH}`);
+        console.log(`\n⚙️  配置文件: ${resolveCliStoragePaths().configPath}`);
         if (current.user) {
           console.log(`默认用户 ID: ${current.user}`);
           console.log('可直接运行: douban me');
@@ -202,7 +241,9 @@ export function registerUserCommands(program: Command): void {
           userId = profile.id;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          throw new Error(`本地登录态无法识别当前账号：${message}。请重新运行 douban login 或配置 --user`);
+          throw new Error(`本地登录态无法识别当前账号：${message}。请重新运行 douban login 或配置 --user`, {
+            cause: error
+          });
         }
       }
 
