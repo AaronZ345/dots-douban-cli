@@ -20,6 +20,7 @@ type PagerOptions = {
 const mocks = vi.hoisted(() => ({
   getUserCollectionPage: vi.fn(),
   secureAtomicWriteFile: vi.fn(),
+  sleep: vi.fn(),
   withPagination: vi.fn(async (options: PagerOptions) => {
     const page = options.startPage ?? 1;
     const result = await options.fetchPage(page);
@@ -38,6 +39,12 @@ vi.mock('../utils/pagination.js', () => ({
 }));
 vi.mock('../utils/spinner.js', () => ({
   withSpinner: vi.fn(async (_message: string, task: () => Promise<unknown>) => task())
+}));
+vi.mock('../utils/timing.js', () => ({
+  parseDelaySeconds: vi.fn((value: string | undefined, fallback = Number.NaN) => (
+    typeof value === 'undefined' || value.trim() === '' ? fallback : Number(value)
+  )),
+  sleep: mocks.sleep
 }));
 
 import { registerBookCollectionCommands } from '../commands/book-collection.ts';
@@ -134,22 +141,37 @@ describe('book collection commands', () => {
       });
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
-    await run(['book', 'export', 'alice', '--wish', '--limit', '3', '--output', '/tmp/books.md']);
+    await run([
+      'book',
+      'export',
+      'alice',
+      '--wish',
+      '--limit',
+      '3',
+      '--output',
+      '/tmp/books.md',
+      '--delay',
+      '2'
+    ]);
 
     expect(mocks.getUserCollectionPage).toHaveBeenNthCalledWith(1, {
       kind: 'book',
       userId: 'alice',
       status: 'wish',
       start: 0,
-      count: 3
+      count: 3,
+      pageDelayMs: 2000
     });
     expect(mocks.getUserCollectionPage).toHaveBeenNthCalledWith(2, {
       kind: 'book',
       userId: 'alice',
       status: 'wish',
       start: 2,
-      count: 1
+      count: 1,
+      pageDelayMs: 2000
     });
+    expect(mocks.sleep).toHaveBeenCalledOnce();
+    expect(mocks.sleep).toHaveBeenCalledWith(2000);
 
     const [outputPath, contents] = mocks.secureAtomicWriteFile.mock.calls[0] as [string, string];
     expect(outputPath).toBe(path.resolve('/tmp/books.md'));
@@ -191,7 +213,7 @@ describe('book collection commands', () => {
         warnings: []
       })
       .mockRejectedValueOnce(new Error('temporary failure'));
-    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     await run(['book', 'export', 'alice', '--limit', '2', '--output', '/tmp/partial.json']);
@@ -200,6 +222,9 @@ describe('book collection commands', () => {
     expect(payload.metadata).toMatchObject({ count: 1, partial: true });
     expect(payload.items).toHaveLength(1);
     expect(stderr.mock.calls.flat().join('\n')).toContain('temporary failure');
+    const completion = stdout.mock.calls.flat().join('\n');
+    expect(completion).toContain('结果可能不完整');
+    expect(completion).not.toContain('✅');
   });
 
   it('rejects an unknown export format without fetching or writing', async () => {

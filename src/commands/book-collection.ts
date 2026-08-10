@@ -11,6 +11,7 @@ import { withErrorHandler } from '../utils/error.js';
 import { pageToOffset, parsePositiveInt } from '../utils/parsing.js';
 import { withPagination } from '../utils/pagination.js';
 import { withSpinner } from '../utils/spinner.js';
+import { parseDelaySeconds, sleep } from '../utils/timing.js';
 
 type BookCollectionOptions = {
   wish?: boolean;
@@ -169,7 +170,8 @@ export function serializeBookCollectionMarkdown(
 async function fetchBookCollectionExport(
   userId: string,
   status: CollectionStatus,
-  limit: number
+  limit: number,
+  pageDelayMs: number
 ): Promise<ExportResult> {
   const items: UserCollectionItem[] = [];
   const seenItems = new Set<string>();
@@ -189,6 +191,10 @@ async function fetchBookCollectionExport(
     seenStarts.add(nextStart);
     requestCount += 1;
 
+    if (requestCount > 1 && pageDelayMs > 0) {
+      await sleep(pageDelayMs);
+    }
+
     let result: UserCollectionPage;
     try {
       result = await getUserCollectionPage({
@@ -196,7 +202,8 @@ async function fetchBookCollectionExport(
         userId,
         status,
         start: nextStart,
-        count: Math.min(EXPORT_BATCH_SIZE, limit - items.length)
+        count: Math.min(EXPORT_BATCH_SIZE, limit - items.length),
+        pageDelayMs
       });
     } catch (error) {
       if (items.length === 0) throw error;
@@ -314,6 +321,7 @@ export function registerBookCollectionCommands(book: Command): void {
     .option('-n, --limit <n>', `最多导出数量（上限 ${MAX_EXPORT_ITEMS}）`, String(DEFAULT_EXPORT_LIMIT))
     .requiredOption('-o, --output <path>', '输出文件路径')
     .option('-f, --format <format>', '格式：json、csv、markdown（默认按扩展名推断）')
+    .option('--delay <seconds>', '分页请求间隔（秒）', '1')
     .action(withErrorHandler((args) => ({
       command: 'book export',
       target: `用户ID: ${String(args[0] || '未指定')}`,
@@ -321,11 +329,13 @@ export function registerBookCollectionCommands(book: Command): void {
     }), async (userId, opts) => {
       const { status, label: statusLabel } = resolveBookCollectionStatus(opts);
       const limit = parseExportLimit(opts.limit);
+      const delaySeconds = parseDelaySeconds(opts.delay, 1);
+      const pageDelayMs = Math.round(delaySeconds * 1000);
       const outputPath = path.resolve(String(opts.output));
       const format = resolveExportFormat(opts.format, outputPath);
       const result = await withSpinner(
         `正在导出用户 ${userId} 的${statusLabel}书单...`,
-        () => fetchBookCollectionExport(userId, status, limit),
+        () => fetchBookCollectionExport(userId, status, limit, pageDelayMs),
         true
       );
       emitWarnings(result);
@@ -340,6 +350,10 @@ export function registerBookCollectionCommands(book: Command): void {
       }
 
       secureAtomicWriteFile(outputPath, contents);
-      console.log(`✅ 已导出 ${result.items.length} 本书到 ${outputPath}`);
+      if (result.partial) {
+        console.log(`⚠️ 已写入 ${result.items.length} 本书到 ${outputPath}；结果可能不完整，请查看上方警告。`);
+      } else {
+        console.log(`✅ 已导出 ${result.items.length} 本书到 ${outputPath}`);
+      }
     }));
 }

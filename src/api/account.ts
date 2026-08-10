@@ -35,6 +35,16 @@ export interface CollectionRecord {
   comment?: string;
 }
 
+export interface CollectionRecordLoadOptions {
+  pageDelayMs?: number;
+}
+
+export interface CollectionRecordResult {
+  records: CollectionRecord[];
+  partial: boolean;
+  warnings: string[];
+}
+
 function parseMineAnchor(html: string): ProfileMatch | null {
   const byClassThenHref = html.match(/<a[^>]*class=["'][^"']*\blnk-mine\b[^"']*["'][^>]*href=["']https:\/\/www\.douban\.com\/people\/([^/"']+)\/["'][^>]*>([\s\S]*?)<\/a>/i);
   if (byClassThenHref?.[1]) {
@@ -162,30 +172,43 @@ export async function getCollectionRecords(
   userId: string,
   status: CollectionStatus,
   limit: number,
-  cookies: string
-): Promise<CollectionRecord[]> {
+  cookies: string,
+  options: CollectionRecordLoadOptions = {}
+): Promise<CollectionRecordResult> {
   const id = userId.trim();
   if (!id) throw new Error('用户 ID 不能为空');
-  if (!Number.isInteger(limit) || limit <= 0) return [];
+  if (!Number.isInteger(limit) || limit <= 0) {
+    return { records: [], partial: false, warnings: [] };
+  }
 
   const page = await loadAuthenticatedUserCollectionPage({
     kind: 'movie',
     userId: id,
     status,
     start: 0,
-    count: limit
+    count: limit,
+    pageDelayMs: options.pageDelayMs
   }, cookies);
-  if (page.partial) {
-    debug('account', `用户收藏仅返回部分结果: ${page.warnings.join('; ')}`);
+  const warnings = page.warnings.length > 0
+    ? page.warnings
+    : page.partial
+      ? ['豆瓣返回了部分收藏结果，但未提供具体原因']
+      : [];
+  if (warnings.length > 0) {
+    debug('account', `用户收藏仅返回部分结果: ${warnings.join('; ')}`);
   }
 
-  return page.items.map((item) => ({
-    id: item.id,
-    title: item.title,
-    url: item.url,
-    status,
-    date: item.date || undefined,
-    rating: item.rating > 0 ? item.rating : undefined,
-    comment: item.comment || undefined
-  }));
+  return {
+    records: page.items.map((item) => ({
+      id: item.id,
+      title: item.title,
+      url: item.url,
+      status,
+      date: item.date || undefined,
+      rating: item.rating > 0 ? item.rating : undefined,
+      comment: item.comment || undefined
+    })),
+    partial: page.partial,
+    warnings
+  };
 }

@@ -1,4 +1,5 @@
 import { BOOK_BASE, BASE, cleanText, fetchHtml, ResponseSchemaError } from './common.js';
+import { sleep } from '../utils/timing.js';
 
 export type CollectionKind = 'movie' | 'book';
 export type CollectionStatus = 'collect' | 'wish' | 'do';
@@ -20,6 +21,7 @@ export interface UserCollectionPageOptions {
   status: CollectionStatus;
   start?: number;
   count?: number;
+  pageDelayMs?: number;
 }
 
 export interface UserCollectionPage {
@@ -38,7 +40,7 @@ interface ParsedCollectionPage {
   explicitlyEmpty: boolean;
 }
 
-const UPSTREAM_COLLECTION_PAGE_SIZE = 30;
+const UPSTREAM_COLLECTION_PAGE_SIZE = 15;
 const MAX_COLLECTION_COUNT = 5000;
 
 function normalizeRatingClass(block: string): number {
@@ -53,8 +55,151 @@ function parseDate(text: string): string {
 }
 
 function readAttribute(tag: string, name: string): string {
-  const match = tag.match(new RegExp(`${name}=["']([^"']*)["']`, 'i'));
+  const match = tag.match(new RegExp(`\\s${name}\\s*=["']([^"']*)["']`, 'i'));
   return match?.[1] ? cleanText(match[1]) : '';
+}
+
+function hasClassToken(openingTag: string, className: string): boolean {
+  return readAttribute(openingTag, 'class').split(/\s+/).includes(className);
+}
+
+interface HtmlElementBlock {
+  html: string;
+  end: number;
+}
+
+function readElementBlock(html: string, start: number, tagName: string): HtmlElementBlock | null {
+  const tagRegex = new RegExp(`<\\/?${tagName}\\b[^>]*>`, 'gi');
+  tagRegex.lastIndex = start;
+  let depth = 0;
+  let tagMatch: RegExpExecArray | null;
+
+  while ((tagMatch = tagRegex.exec(html)) !== null) {
+    if (depth === 0 && tagMatch.index !== start) return null;
+    const tag = tagMatch[0];
+    if (/^<\//.test(tag)) {
+      depth -= 1;
+      if (depth === 0) {
+        return { html: html.slice(start, tagRegex.lastIndex), end: tagRegex.lastIndex };
+      }
+    } else if (!/\/\s*>$/.test(tag)) {
+      depth += 1;
+    }
+  }
+
+  return null;
+}
+
+function findClassElementBlocks(html: string, className: string, tagName: string): string[] {
+  const blocks: string[] = [];
+  const openingTagRegex = new RegExp(`<${tagName}\\b[^>]*>`, 'gi');
+  let openingMatch: RegExpExecArray | null;
+
+  while ((openingMatch = openingTagRegex.exec(html)) !== null) {
+    if (!hasClassToken(openingMatch[0], className)) continue;
+    const element = readElementBlock(html, openingMatch.index, tagName);
+    if (element) blocks.push(element.html);
+  }
+
+  return blocks;
+}
+
+function findFirstClassText(html: string, className: string, tagNames: string[]): string {
+  for (const tagName of tagNames) {
+    for (const block of findClassElementBlocks(html, className, tagName)) {
+      const text = cleanText(block);
+      if (text) return text;
+    }
+  }
+  return '';
+}
+
+function extractCollectionItemBlocks(html: string): string[] {
+  const blocks: string[] = [];
+  const openingTagRegex = /<(li|div)\b[^>]*>/gi;
+  let openingMatch: RegExpExecArray | null;
+
+  while ((openingMatch = openingTagRegex.exec(html)) !== null) {
+    const openingTag = openingMatch[0];
+    if (!hasClassToken(openingTag, 'item') && !hasClassToken(openingTag, 'subject-item')) continue;
+    const tagName = openingMatch[1];
+    if (!tagName) continue;
+    const element = readElementBlock(html, openingMatch.index, tagName);
+    if (!element) continue;
+    blocks.push(element.html);
+    openingTagRegex.lastIndex = element.end;
+  }
+
+  return blocks;
+}
+
+interface SubjectLink {
+  id: string;
+  url: string;
+  visibleTitle: string;
+  linkTitle: string;
+  imageAlt: string;
+  cover: string;
+}
+
+function parseSubjectLinks(block: string, kind: CollectionKind): SubjectLink[] {
+  const base = collectionBase(kind);
+  const expectedHost = new URL(base).hostname;
+  const links: SubjectLink[] = [];
+  const anchorRegex = /<a\b[^>]*>[\s\S]*?<\/a>/gi;
+  let anchorMatch: RegExpExecArray | null;
+
+  while ((anchorMatch = anchorRegex.exec(block)) !== null) {
+    const anchor = anchorMatch[0];
+    const openingTag = anchor.match(/^<a\b[^>]*>/i)?.[0] || '';
+    const href = readAttribute(openingTag, 'href');
+    if (!href) continue;
+
+    let url: URL;
+    try {
+      url = new URL(href, base);
+    } catch {
+      continue;
+    }
+    if (url.hostname !== expectedHost) continue;
+    const id = url.pathname.match(/^\/subject\/(\d+)\/?/)?.[1];
+    if (!id) continue;
+
+    const body = anchor.slice(openingTag.length, -'</a>'.length);
+    const imageTag = body.match(/<img\b[^>]*>/i)?.[0] || '';
+    const emphasizedTitle = body.match(/<em\b[^>]*>([\s\S]*?)<\/em>/i)?.[1];
+    links.push({
+      id,
+      url: url.href,
+      visibleTitle: cleanText(emphasizedTitle || body),
+      linkTitle: readAttribute(openingTag, 'title'),
+      imageAlt: readAttribute(imageTag, 'alt'),
+      cover: readAttribute(imageTag, 'data-origin')
+        || readAttribute(imageTag, 'data-src')
+        || readAttribute(imageTag, 'src')
+    });
+  }
+
+  return links;
+}
+
+function parseCollectionComment(block: string): string {
+  const introTexts = ['span', 'p', 'div', 'li']
+    .flatMap((tagName) => findClassElementBlocks(block, 'intro', tagName))
+    .map((intro) => cleanText(intro))
+    .filter(Boolean);
+
+  for (const tagName of ['span', 'p', 'blockquote', 'div', 'li']) {
+    for (const commentBlock of findClassElementBlocks(block, 'comment', tagName)) {
+      if (['span', 'p', 'div', 'li'].some((introTag) => (
+        findClassElementBlocks(commentBlock, 'intro', introTag).length > 0
+      ))) continue;
+      const text = cleanText(commentBlock).replace(/\s*\(\d+\s*有用\)\s*$/, '');
+      if (text && !introTexts.includes(text)) return text;
+    }
+  }
+
+  return '';
 }
 
 function collectionBase(kind: CollectionKind): string {
@@ -95,35 +240,25 @@ export function parseUserCollectionPageHtml(
   pageUrl: string
 ): ParsedCollectionPage {
   const base = collectionBase(kind);
-  const escapedHost = kind === 'book' ? 'book\\.douban\\.com' : 'movie\\.douban\\.com';
   const items: UserCollectionItem[] = [];
-  const itemRegex = /<li[^>]*class=["'][^"']*\bitem\b[^"']*["'][^>]*>[\s\S]*?<\/li>/gi;
-  let match: RegExpExecArray | null;
-
-  while ((match = itemRegex.exec(html)) !== null) {
-    const block = match[0];
-    const subjectMatch = block.match(new RegExp(
-      `<a[^>]*href=["']((?:https?:)?//${escapedHost}/subject/(\\d+)/?[^"']*)["'][^>]*>([\\s\\S]*?)<\\/a>`,
-      'i'
-    ));
-    if (!subjectMatch?.[2]) continue;
-
-    const title = cleanText(subjectMatch[3]);
+  for (const block of extractCollectionItemBlocks(html)) {
+    const subjectLinks = parseSubjectLinks(block, kind);
+    const subject = subjectLinks[0];
+    if (!subject) continue;
+    const matchingLinks = subjectLinks.filter((link) => link.id === subject.id);
+    const titleLink = matchingLinks.find((link) => link.visibleTitle) || subject;
+    const title = titleLink.visibleTitle || titleLink.linkTitle || titleLink.imageAlt;
     if (!title) continue;
-    const imageTag = block.match(/<img\b[^>]*>/i)?.[0] || '';
-    const dateMatch = block.match(/<div[^>]*class=["'][^"']*\bdate\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i);
-    const commentMatch = block.match(/<(?:span|div)[^>]*class=["'][^"']*\bcomment\b[^"']*["'][^>]*>([\s\S]*?)<\/(?:span|div)>/i);
-    const absoluteUrl = subjectMatch[1].startsWith('//') ? `https:${subjectMatch[1]}` : subjectMatch[1];
 
     items.push({
       kind,
-      id: subjectMatch[2],
+      id: subject.id,
       title,
-      url: absoluteUrl || `${base}/subject/${subjectMatch[2]}/`,
+      url: subject.url || `${base}/subject/${subject.id}/`,
       rating: normalizeRatingClass(block),
-      date: parseDate(dateMatch?.[1] || ''),
-      comment: cleanText(commentMatch?.[1] || '').replace(/\s*\(\d+\s*有用\)\s*$/, ''),
-      cover: readAttribute(imageTag, 'data-origin') || readAttribute(imageTag, 'src')
+      date: parseDate(findFirstClassText(block, 'date', ['span', 'div', 'p', 'li'])),
+      comment: parseCollectionComment(block),
+      cover: matchingLinks.find((link) => link.cover)?.cover || ''
     });
   }
 
@@ -150,9 +285,13 @@ async function loadUserCollectionPage(
   if (!userId) throw new Error('用户 ID 不能为空');
   const start = options.start ?? 0;
   const count = options.count ?? 15;
+  const pageDelayMs = options.pageDelayMs ?? 0;
   if (!Number.isInteger(start) || start < 0) throw new Error('start 必须是非负整数');
   if (!Number.isInteger(count) || count <= 0 || count > MAX_COLLECTION_COUNT) {
     throw new Error(`count 必须是 1-${MAX_COLLECTION_COUNT} 的整数`);
+  }
+  if (!Number.isFinite(pageDelayMs) || pageDelayMs < 0) {
+    throw new Error('pageDelayMs 必须是非负数字');
   }
 
   const base = collectionBase(options.kind);
@@ -167,7 +306,10 @@ async function loadUserCollectionPage(
   const maxRequests = Math.min(200, Math.ceil(count / UPSTREAM_COLLECTION_PAGE_SIZE) + 2);
 
   for (let requestNumber = 0; requestNumber < maxRequests && results.length < count && nextStart !== null; requestNumber += 1) {
-    const pageUrl = `${base}/people/${encodedUserId}/${options.status}/?start=${cursor}&sort=time&rating=all&filter=all&mode=list`;
+    if (requestNumber > 0 && pageDelayMs > 0) {
+      await sleep(Math.round(pageDelayMs));
+    }
+    const pageUrl = `${base}/people/${encodedUserId}/${options.status}/?start=${cursor}&sort=time&rating=all&filter=all&mode=grid`;
     let page: ParsedCollectionPage;
     try {
       const html = await fetchHtml(pageUrl, {

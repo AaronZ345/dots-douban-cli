@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getBookChart, getLatestBooks, searchBooks } from '../api/book.ts';
 import { getUserCollectionPage } from '../api/collection.ts';
@@ -192,12 +193,103 @@ describe('partial rating and collection data', () => {
   });
 
   it('supports book collection pages', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => htmlResponse(`
-      <span class="subject-num">1-1 / 1</span>
-      <li class="item"><a href="https://book.douban.com/subject/42/">图书 42</a><div class="date">2026-01-01</div></li>`)));
+    const fetchMock = vi.fn(async (_input: string | URL | Request) => {
+      void _input;
+      return htmlResponse(`
+        <span class="subject-num">1-1 / 1</span>
+        <li class="subject-item">
+          <div class="pic">
+            <a href="https://book.douban.com/subject/42/"><img src="https://img.example.com/book-42.jpg"></a>
+          </div>
+          <div class="info">
+            <h2><a href="https://book.douban.com/subject/42/">图书 42</a></h2>
+            <div class="pub">作者 / 出版社 / 2026</div>
+            <div class="short-note">
+              <span class="date">2026-01-01 读过</span>
+              <p class="comment">值得一读</p>
+            </div>
+          </div>
+        </li>`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
 
     const page = await getUserCollectionPage({ kind: 'book', userId: 'tester', status: 'collect', count: 10 });
-    expect(page.items[0]).toMatchObject({ kind: 'book', id: '42', title: '图书 42' });
+    expect(page.items[0]).toMatchObject({
+      kind: 'book',
+      id: '42',
+      title: '图书 42',
+      date: '2026-01-01',
+      comment: '值得一读',
+      cover: 'https://img.example.com/book-42.jpg'
+    });
     expect(page.nextStart).toBeNull();
+    expect(new URL(String(fetchMock.mock.calls[0]?.[0])).searchParams.get('mode')).toBe('grid');
+  });
+
+  it('separates collection metadata from user comments and finds image-only covers', async () => {
+    const html = readFileSync(new URL('./fixtures/movie-collection-page.html', import.meta.url), 'utf8');
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      void input;
+      return htmlResponse(html);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const page = await getUserCollectionPage({
+      kind: 'movie',
+      userId: 'tester',
+      status: 'collect',
+      count: 2
+    });
+
+    expect(page.items).toEqual([
+      {
+        kind: 'movie',
+        id: '37235567',
+        title: '坏蛋联盟2 / The Bad Guys 2',
+        url: 'https://movie.douban.com/subject/37235567/',
+        rating: 4,
+        date: '2026-08-09',
+        comment: '',
+        cover: 'https://img.example.com/bad-guys-2.webp'
+      },
+      {
+        kind: 'movie',
+        id: '42',
+        title: '示例电影 / Example Movie',
+        url: 'https://movie.douban.com/subject/42/',
+        rating: 5,
+        date: '2026-08-10',
+        comment: '真正的用户短评',
+        cover: 'https://img.example.com/example.webp'
+      }
+    ]);
+    expect(new URL(String(fetchMock.mock.calls[0]?.[0])).searchParams.get('mode')).toBe('grid');
+  });
+
+  it('waits between upstream collection pages when pacing is requested', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const start = Number(new URL(String(input)).searchParams.get('start') || 0);
+      const itemCount = start === 0 ? 15 : 1;
+      const items = Array.from({ length: itemCount }, (_, index) => {
+        const id = start + index + 1;
+        return `<li class="item"><a href="https://movie.douban.com/subject/${id}/">电影 ${id}</a></li>`;
+      }).join('');
+      const next = start === 0 ? '<span class="next"><a href="?start=15">后页</a></span>' : '';
+      return htmlResponse(`<span class="subject-num">${start + 1}-${start + itemCount} / 16</span>${items}${next}`);
+    });
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    vi.stubGlobal('fetch', fetchMock);
+
+    const page = await getUserCollectionPage({
+      kind: 'movie',
+      userId: 'tester',
+      status: 'collect',
+      count: 16,
+      pageDelayMs: 7
+    });
+
+    expect(page.items).toHaveLength(16);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(timeoutSpy.mock.calls.some((call) => call[1] === 7)).toBe(true);
   });
 });

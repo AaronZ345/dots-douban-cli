@@ -75,6 +75,12 @@ function calcStats(records: Array<{ date?: string; rating?: number }>, year: num
   };
 }
 
+function reportPartialWarnings(scope: string, warnings: string[]): void {
+  warnings.forEach((warning) => {
+    console.error(`⚠️ ${scope}可能不完整：${warning}`);
+  });
+}
+
 function protectSpreadsheetCell(value: string): string {
   let candidate = value;
   while (candidate.startsWith('\uFEFF')) candidate = candidate.slice(1);
@@ -197,10 +203,12 @@ export function registerSocialCommands(program: Command): void {
     .helpGroup('收藏与账号:')
     .description('我的统计（今年看了多少片） [需登录]')
     .option('-y, --year <year>', '统计年份，默认今年')
+    .option('-n, --limit <n>', '最多读取的看过记录数', '1000')
+    .option('--delay <seconds>', '分页请求间隔（秒）', '1')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler({
       command: 'stats',
-      suggestion: '可尝试：douban stats --year 2026'
+      suggestion: '可尝试：douban stats --year 2026 --limit 30 --delay 2'
     }, async (opts) => {
       const year = typeof opts.year === 'string'
         ? parsePositiveInt(opts.year, '--year', new Date().getFullYear())
@@ -208,23 +216,28 @@ export function registerSocialCommands(program: Command): void {
       if (!Number.isInteger(year) || year < 1900 || year > 3000) {
         throw new Error('年份格式不正确');
       }
+      const limit = parsePositiveInt(opts.limit, '--limit', 1000);
+      const delaySeconds = parseDelaySeconds(opts.delay, 1);
+      const pageDelayMs = Math.round(delaySeconds * 1000);
 
       const auth = await withSpinner('正在检查登录状态...', () => ensureAuth(), !opts.json);
       const me = currentUserProfile(auth);
-      const records = await withSpinner(
+      const result = await withSpinner(
         `正在读取 ${me.id} 的看过记录...`,
-        () => getCollectionRecords(me.id, 'collect', 1000, auth.cookies),
+        () => getCollectionRecords(me.id, 'collect', limit, auth.cookies, { pageDelayMs }),
         !opts.json
       );
 
-      const stat = calcStats(records, year);
+      const stat = calcStats(result.records, year);
+      const metadata = { partial: result.partial, warnings: result.warnings };
+      reportPartialWarnings('统计数据', result.warnings);
 
       if (opts.json) {
-        console.log(JSON.stringify({ user: me, ...stat }, null, 2));
+        console.log(JSON.stringify({ user: me, ...stat, metadata }, null, 2));
         return;
       }
 
-      console.log(`\n📊 ${me.name} 在 ${year} 年观影统计`);
+      console.log(`\n📊 ${me.name} 在 ${year} 年观影统计${metadata.partial ? '（结果可能不完整）' : ''}`);
       console.log(`总计: ${stat.total} 部`);
       console.log(`平均分: ${stat.avgScore}`);
       console.log('\n按月分布:');
@@ -259,40 +272,53 @@ export function registerSocialCommands(program: Command): void {
       const auth = await withSpinner('正在检查登录状态...', () => ensureAuth(), true);
       const me = currentUserProfile(auth);
 
-      const tasks: Array<{ status: 'collect' | 'wish' | 'do'; text: string }> = [
-        { status: 'collect', text: '正在获取看过记录...' },
-        { status: 'wish', text: '正在获取想看记录...' },
-        { status: 'do', text: '正在获取在看记录...' }
+      const tasks: Array<{ status: 'collect' | 'wish' | 'do'; label: string; text: string }> = [
+        { status: 'collect', label: '看过', text: '正在获取看过记录...' },
+        { status: 'wish', label: '想看', text: '正在获取想看记录...' },
+        { status: 'do', label: '在看', text: '正在获取在看记录...' }
       ];
 
       const bucket = new Map<'collect' | 'wish' | 'do', Awaited<ReturnType<typeof getCollectionRecords>>>();
+      const warnings: string[] = [];
       for (let i = 0; i < tasks.length; i += 1) {
         const task = tasks[i];
-        const items = await withSpinner(
+        const result = await withSpinner(
           task.text,
-          () => getCollectionRecords(me.id, task.status, limit, auth.cookies),
+          () => getCollectionRecords(me.id, task.status, limit, auth.cookies, { pageDelayMs: delayMs }),
           true
         );
-        bucket.set(task.status, items);
+        bucket.set(task.status, result);
+        const scopedWarnings = result.warnings.map((warning) => `${task.label}：${warning}`);
+        warnings.push(...scopedWarnings);
+        reportPartialWarnings('导出数据', scopedWarnings);
 
         if (delayMs > 0 && i < tasks.length - 1) {
           await sleep(delayMs);
         }
       }
 
-      const collect = bucket.get('collect') || [];
-      const wish = bucket.get('wish') || [];
-      const doing = bucket.get('do') || [];
+      const collect = bucket.get('collect')?.records || [];
+      const wish = bucket.get('wish')?.records || [];
+      const doing = bucket.get('do')?.records || [];
 
       const merged = [...collect, ...wish, ...doing];
+      const metadata = {
+        count: merged.length,
+        partial: [...bucket.values()].some((result) => result.partial),
+        warnings
+      };
 
       if (format === 'json') {
-        secureAtomicWriteFile(outputPath, `${JSON.stringify({ user: me, records: merged }, null, 2)}\n`);
+        secureAtomicWriteFile(outputPath, `${JSON.stringify({ user: me, records: merged, metadata }, null, 2)}\n`);
       } else {
         secureAtomicWriteFile(outputPath, serializeExportCsv(merged));
       }
 
-      console.log(`✅ 已导出 ${merged.length} 条记录到 ${outputPath}`);
+      if (metadata.partial) {
+        console.log(`⚠️ 已写入 ${merged.length} 条记录到 ${outputPath}；结果可能不完整，请查看上方警告。`);
+      } else {
+        console.log(`✅ 已导出 ${merged.length} 条记录到 ${outputPath}`);
+      }
     }));
 
   program
