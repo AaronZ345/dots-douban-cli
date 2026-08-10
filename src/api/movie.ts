@@ -663,13 +663,6 @@ export async function getReviews(movieId: string, start = 0, limit = 20): Promis
   return getSubjectReviews('movie', movieId, start, limit);
 }
 
-// City code mapping
-export const CITIES: Record<string, string> = {
-  '北京': 'beijing', '上海': 'shanghai', '广州': 'guangzhou', '深圳': 'shenzhen',
-  '苏州': 'suzhou', '杭州': 'hangzhou', '南京': 'nanjing', '成都': 'chengdu',
-  '武汉': 'wuhan', '西安': 'xian', '重庆': 'chongqing', '天津': 'tianjin'
-};
-
 /**
  * Get movie comments (short reviews) from mobile API.
  * order_by: 'hot' (default) or 'latest'

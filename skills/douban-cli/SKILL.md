@@ -48,7 +48,7 @@ description: "当用户明确要求以豆瓣为数据源，或明确要求使用
 | `douban tv <tag> [-n <limit>]` | 按上述标签查看剧集 |
 | `douban rank <genre> [-n <limit>]` | 按电影类型查看高分排行 |
 | `douban top250 [-p <page>]` | 电影 Top250，每页 25 条，支持交互翻页 |
-| `douban now [-c <city>] [-n <limit>]` | 指定城市正在热映，默认北京 |
+| `douban now [-c <slug>] [-n <limit>]` | 指定城市正在热映；城市使用拼音，默认 `beijing` |
 | `douban coming [-n <limit>]` | 即将上映，默认 20 条 |
 | `douban weekly [-n <limit>]` | 一周口碑榜，默认 10 条 |
 | `douban search <keyword> [-s <start>] [-n <limit>]` | 搜索电影，使用偏移量分页 |

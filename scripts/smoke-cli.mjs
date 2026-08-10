@@ -37,6 +37,18 @@ assert.equal(searchHelp.status, 0);
 assert.match(searchHelp.stdout, /<keyword>/);
 assert.match(searchHelp.stdout, /--limit/);
 
+const nowHelp = run('now', '--help');
+assert.equal(nowHelp.status, 0);
+assert.match(nowHelp.stdout, /城市拼音/);
+assert.match(nowHelp.stdout, /beijing/);
+
+const invalidCity = run('now', '--city', '上海', '--json');
+assert.equal(invalidCity.status, 1);
+assert.equal(invalidCity.stdout, '');
+const invalidCityPayload = JSON.parse(invalidCity.stderr);
+assert.equal(invalidCityPayload.error.code, 'INVALID_ARGUMENT');
+assert.match(invalidCityPayload.error.message, /必须使用拼音/);
+
 const missingArgument = run('search');
 assert.equal(missingArgument.status, 1);
 assert.equal(missingArgument.stdout, '');

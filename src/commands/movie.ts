@@ -1,6 +1,5 @@
 import { Command } from 'commander';
 import {
-  CITIES,
   GENRES,
   getComing,
   getComments,
@@ -327,22 +326,21 @@ export function registerMovieCommands(program: Command): void {
   program
     .command('now')
     .description('获取正在热映电影')
-    .option('-c, --city <city>', '城市名称（北京/上海/苏州/...）', '北京')
+    .option('-c, --city <slug>', '城市拼音（如 beijing、shanghai）', 'beijing')
     .option('-n, --limit <n>', '返回数量')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler((args) => ({
       command: 'now',
       target: `城市: ${String((args[0] as { city?: string }).city ?? '')}`,
-      suggestion: '可尝试：douban now -c 上海'
+      suggestion: '可尝试：douban now -c shanghai'
     }), async (opts) => {
-      const cityInput = String(opts.city || '').trim();
-      const cityCode = CITIES[cityInput] || cityInput;
-      if (!cityCode) {
-        throw new Error('城市不能为空');
+      const citySlug = String(opts.city || '').trim().toLowerCase();
+      if (!/^[a-z0-9-]+$/.test(citySlug)) {
+        throw new Error('城市必须使用拼音，例如 beijing 或 shanghai');
       }
       let items = await withSpinner(
-        `正在获取${cityInput}热映电影...`,
-        () => getNowPlaying(cityCode),
+        `正在获取 ${citySlug} 热映电影...`,
+        () => getNowPlaying(citySlug),
         !opts.json
       );
 
@@ -354,7 +352,7 @@ export function registerMovieCommands(program: Command): void {
       if (opts.json) {
         console.log(JSON.stringify(items, null, 2));
       } else {
-        console.log(`\n🎬 ${cityInput}正在热映\n`);
+        console.log(`\n🎬 ${citySlug} 正在热映\n`);
         renderTable(items, [
           { header: '#', value: (_, i) => String(i + 1), minWidth: 2 },
           { header: '片名', value: (item) => item.title, minWidth: 14 },

@@ -81,7 +81,7 @@ npx @marvae24/douban-cli hot
 | `douban tv <tag>` | 按标签查看剧集 | `热门/美剧/英剧/日剧/韩剧/国产剧/综艺/最新` |
 | `douban rank <genre>` | 按类型查看高分电影 | `--limit` |
 | `douban top250` | 豆瓣电影 Top250，每页 25 条 | `--page`，支持交互翻页 |
-| `douban now` | 指定城市正在热映 | `--city`、`--limit` |
+| `douban now` | 指定城市正在热映，城市使用拼音 | `--city`、`--limit` |
 | `douban coming` | 即将上映 | `--limit` |
 | `douban weekly` | 一周口碑榜与排名趋势 | `--limit` |
 | `douban search <keyword>` | 搜索电影 | `--start`、`--limit` |
@@ -95,7 +95,7 @@ npx @marvae24/douban-cli hot
 ```bash
 douban hot --tv --tag 英剧 --limit 10
 douban top250 --page 2
-douban now --city 上海
+douban now --city shanghai
 douban search "奥本海默" --start 20 --limit 20
 douban movie 35593344
 douban movie "沙丘"
