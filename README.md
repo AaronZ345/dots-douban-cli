@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/%40marvae24%2Fdouban-cli.svg)](https://www.npmjs.com/package/@marvae24/douban-cli)
 [![npm downloads](https://img.shields.io/npm/dm/%40marvae24%2Fdouban-cli.svg)](https://www.npmjs.com/package/@marvae24/douban-cli)
-[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.13.0-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Unofficial Douban CLI for movies, TV shows, books, collections, and authenticated movie actions.
@@ -51,7 +51,7 @@ douban search "奥本海默" --json
 
 ## 📦 安装
 
-需要 Node.js 22 或更高版本。
+需要 Node.js 22.13.0 或更高版本。
 
 ```bash
 npm install -g @marvae24/douban-cli

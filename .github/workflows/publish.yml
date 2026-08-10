@@ -11,15 +11,15 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
 
-      - run: npm install -g npm@11.6.2
+      - run: npm install -g npm@11.19.0
       - run: npm ci
-      - run: npm run verify
       - name: Verify release tag matches package version
         run: node -e "const version=require('./package.json').version; const expected='v'+version; if(process.env.GITHUB_REF_NAME!==expected){console.error('Expected release tag '+expected+', got '+process.env.GITHUB_REF_NAME); process.exit(1)}"
-      - run: npm publish --registry https://registry.npmjs.org
+      - name: Publish to npm (prepack runs verification)
+        run: npm publish --registry https://registry.npmjs.org

@@ -2,7 +2,7 @@
 
 ## Project overview
 
-`douban-cli` is a Node.js 22+ TypeScript ESM command-line application built with Commander. Source code lives in `src/`; `npm run build` emits the executable package to `dist/`.
+`douban-cli` is a Node.js >=22.13.0 TypeScript ESM command-line application built with Commander. Source code lives in `src/`; `npm run build` emits the executable package to `dist/`.
 
 Start with:
 
