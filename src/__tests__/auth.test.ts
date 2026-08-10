@@ -401,7 +401,7 @@ describe.sequential('authentication safety', () => {
 
     await expect(auth.loginFromBrowserCookies({}, reader as never))
       .rejects.toThrow('检测到多个豆瓣账号');
-    expect(reader).toHaveBeenCalledTimes(4);
+    expect(reader).toHaveBeenCalledTimes(process.platform === 'darwin' ? 4 : 3);
     expect(existsSync(authCachePath())).toBe(false);
   });
 

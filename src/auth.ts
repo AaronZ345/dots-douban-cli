@@ -564,7 +564,12 @@ async function extractFromBrowsers(
 
   const browsers: BrowserName[] = options.browser
     ? [options.browser]
-    : ['chrome', 'edge', 'firefox', 'safari'];
+    : [
+        'chrome',
+        'edge',
+        'firefox',
+        ...(process.platform === 'darwin' ? ['safari' as const] : [])
+      ];
   const targets = browsers.map((browser) => ({
     browser,
     ...resolveBrowserCookieTarget(browser, process.platform)
