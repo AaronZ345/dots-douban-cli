@@ -45,7 +45,7 @@ commands/* -> api/account.ts -> serializer -> storage/secure-file.ts
   - `book-collection.ts` — public book collections and Markdown/CSV/JSON export.
   - `user.ts` — movie collections, `me`, and local user configuration.
   - `auth.ts` — login, identity display, and logout commands.
-  - `mark.ts` / `social.ts` — account mutations, feed, statistics, and private exports.
+  - `mark.ts` / `social.ts` — account mutations, statistics, and private exports.
 - `src/api/` — Douban URLs, response validation, domain parsing, and API result types. It must not render terminal output.
   - `http/` — timeout, redirect, retry, content-type, and structured transport errors for public reads.
   - `common.ts` — shared read client and HTML/text helpers.
@@ -53,7 +53,7 @@ commands/* -> api/account.ts -> serializer -> storage/secure-file.ts
   - `book-parsers.ts` — pure book HTML parsers.
   - `subject.ts` — behavior genuinely shared by movies and books, such as ratings, comments, and reviews.
   - `collection.ts` — shared movie/book collection parsing and cursor-based pagination; its authenticated loader is internal to `account.ts`.
-  - `account.ts` — authenticated profile, feed, and collection reads.
+  - `account.ts` — authenticated profile and collection reads.
   - `mutations.ts` — CSRF resolution and non-idempotent account endpoints.
   - `index.ts` — public unauthenticated read APIs only; authenticated modules are imported directly.
   - `user.ts` — compatibility wrapper for older movie collection callers.

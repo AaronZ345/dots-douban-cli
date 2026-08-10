@@ -47,6 +47,16 @@ assert.doesNotMatch(rootHelp.stdout, /book tag/);
 assert.doesNotMatch(rootHelp.stdout, /\bfeed\b/);
 assert.equal(rootHelp.stderr, '');
 
+for (const removedCommand of [
+  ['feed', '--json'],
+  ['book', 'tag', '小说', '--json']
+]) {
+  const result = run(...removedCommand);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.equal(JSON.parse(result.stderr).error.code, 'UNKNOWN_COMMAND');
+}
+
 const bookHelp = run('book', '--help');
 assert.equal(bookHelp.status, 0);
 assert.match(bookHelp.stdout, /Usage: douban book/);
