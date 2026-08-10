@@ -20,6 +20,7 @@ import { withErrorHandler } from '../utils/error.js';
 import { isNumericId, parseNonNegativeInt, parsePositiveInt } from '../utils/parsing.js';
 import { withPagination } from '../utils/pagination.js';
 import { withSpinner } from '../utils/spinner.js';
+import { registerBookCollectionCommands } from './book-collection.js';
 
 function compactNumber(value: number): string {
   if (!Number.isFinite(value) || value < 0) return '-';
@@ -132,11 +133,12 @@ export function registerBookCommands(program: Command): void {
 
   registerTop250Command(book, 'hot');
   registerTop250Command(book, 'top250');
+  registerBookCollectionCommands(book);
 
   book
     .command('chart [category]')
     .description('获取当前热门图书榜')
-    .option('-n, --limit <n>', '返回数量', '20')
+    .option('-n, --limit <n>', '返回数量（最多 20）', '20')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler((args) => ({
       command: 'book chart',
@@ -159,7 +161,7 @@ export function registerBookCommands(program: Command): void {
     .command('new [category]')
     .alias('latest')
     .description('获取新书速递')
-    .option('-n, --limit <n>', '返回数量', '20')
+    .option('-n, --limit <n>', '返回数量（最多 20）', '20')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler((args) => ({
       command: 'book new',
