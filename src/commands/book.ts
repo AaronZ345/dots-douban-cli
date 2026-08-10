@@ -15,7 +15,7 @@ import {
   searchBooks,
   type BookItem,
   type BookTagSort
-} from '../api/index.js';
+} from '../api/book.js';
 import { withErrorHandler } from '../utils/error.js';
 import { isNumericId, parseNonNegativeInt, parsePositiveInt } from '../utils/parsing.js';
 import { withPagination } from '../utils/pagination.js';

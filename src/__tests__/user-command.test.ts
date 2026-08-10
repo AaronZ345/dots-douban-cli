@@ -5,16 +5,20 @@ import os from 'node:os';
 import path from 'node:path';
 
 const apiMocks = vi.hoisted(() => ({
-  getCurrentUserProfile: vi.fn(),
   getUserCollection: vi.fn(),
   getUserCollectionPage: vi.fn()
 }));
-
-vi.mock('../api/index.js', () => apiMocks);
-vi.mock('../auth.js', () => ({
-  detectAuthSession: vi.fn(),
-  getCachedAuthSession: vi.fn()
+const authMocks = vi.hoisted(() => ({
+  ensureAuth: vi.fn()
 }));
+
+vi.mock('../api/collection.js', () => ({
+  getUserCollectionPage: apiMocks.getUserCollectionPage
+}));
+vi.mock('../api/user.js', () => ({
+  getUserCollection: apiMocks.getUserCollection
+}));
+vi.mock('../auth.js', () => authMocks);
 vi.mock('../utils/spinner.js', () => ({
   withSpinner: vi.fn(async (_message: string, task: () => Promise<unknown>) => task())
 }));
@@ -123,6 +127,28 @@ describe('user command', () => {
     const payload = JSON.parse(String(stderr.mock.calls[0]?.[0]));
     expect(payload.error.code).toBe('INVALID_ARGUMENT');
     expect(process.exitCode).toBe(1);
+  });
+
+  it('uses the verified session identity for me without another profile lookup', async () => {
+    const tempHome = mkdtempSync(path.join(os.tmpdir(), 'douban-config-'));
+    tempDirectories.push(tempHome);
+    process.env.HOME = tempHome;
+    process.env.DOUBAN_CLI_HOME = path.join(tempHome, 'storage');
+    authMocks.ensureAuth.mockResolvedValue({
+      dbcl2: 'secret',
+      cookies: 'dbcl2=secret',
+      source: 'Chrome',
+      accountId: 'alice',
+      accountName: 'Alice',
+      updatedAt: '2026-08-10T00:00:00.000Z'
+    });
+    apiMocks.getUserCollection.mockResolvedValue([]);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    await createProgram().parseAsync(['node', 'douban', 'me', '--json']);
+
+    expect(authMocks.ensureAuth).toHaveBeenCalledOnce();
+    expect(apiMocks.getUserCollection).toHaveBeenCalledWith('alice', 'collect', 30);
   });
 
   it('stores config in a private DOUBAN_CLI_HOME directory', async () => {

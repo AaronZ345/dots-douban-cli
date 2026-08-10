@@ -5,7 +5,7 @@ import {
   decodeExplicitMutation,
   followUser,
   updateSubjectInterest
-} from '../api/authenticated.ts';
+} from '../api/mutations.ts';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -22,7 +22,7 @@ function requestBody(fetchMock: ReturnType<typeof vi.fn>, callIndex = 0): URLSea
   return new URLSearchParams(String(init.body));
 }
 
-describe('authenticated mutation contracts', () => {
+describe('mutation contracts', () => {
   it('rejects ambiguous and conflicting success objects', () => {
     expect(() => decodeExplicitMutation({})).toThrow('缺少明确的成功状态');
     expect(() => decodeExplicitMutation({ r: false })).toThrow();

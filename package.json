@@ -8,6 +8,8 @@
     "douban": "dist/index.js"
   },
   "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "prebuild": "npm run clean",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc -p tsconfig.test.json",

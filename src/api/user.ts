@@ -7,15 +7,6 @@ import {
   type UserCollectionPageOptions
 } from './collection.js';
 
-export { getUserCollectionPage, parseUserCollectionPageHtml } from './collection.js';
-export type {
-  CollectionKind,
-  CollectionStatus,
-  UserCollectionItem,
-  UserCollectionPage,
-  UserCollectionPageOptions
-} from './collection.js';
-
 /**
  * Get a user's movie collection while preserving the original array API.
  */

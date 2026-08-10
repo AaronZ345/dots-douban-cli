@@ -6,7 +6,6 @@ import {
   type AuthSession,
   type BrowserName
 } from '../auth.js';
-import { getCurrentUserProfile } from '../api/index.js';
 import { withErrorHandler } from '../utils/error.js';
 import { withSpinner } from '../utils/spinner.js';
 
@@ -66,7 +65,7 @@ export function registerAuthCommands(program: Command): void {
 
       console.log('\n✅ 登录成功，已保存登录态');
       console.log(`来源: ${session.source}`);
-      if (session.accountId) console.log(`账号: ${session.accountName || session.accountId} (${session.accountId})`);
+      console.log(`账号: ${session.accountName} (${session.accountId})`);
       console.log(`更新时间: ${session.updatedAt}`);
     }));
 
@@ -79,7 +78,11 @@ export function registerAuthCommands(program: Command): void {
       suggestion: '可尝试：douban login 后再运行 douban whoami'
     }, async (opts) => {
       const auth = await withSpinner('正在检查登录状态...', () => ensureAuth(), !opts.json);
-      const profile = await withSpinner('正在获取用户信息...', () => getCurrentUserProfile(auth.cookies), !opts.json);
+      const profile = {
+        id: auth.accountId,
+        name: auth.accountName,
+        url: `https://www.douban.com/people/${auth.accountId}/`
+      };
 
       if (opts.json) {
         console.log(JSON.stringify({

@@ -100,6 +100,31 @@ describe.sequential('authentication safety', () => {
     expect(lstatSync(path.dirname(cachePath)).mode & 0o777).toBe(0o700);
   });
 
+  it('reuses the identity returned by ensureAuth in whoami', async () => {
+    const reader = vi.fn().mockResolvedValue({
+      cookies: [{ name: 'dbcl2', value: 'browser-secret', source: { browser: 'chrome' } }],
+      warnings: []
+    });
+    const fetchMock = vi.fn(async () => new Response(profileHtml('alice', 'Alice'), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const auth = await import('../auth.ts');
+    await auth.loginFromBrowserCookies({ browser: 'chrome' }, reader);
+    fetchMock.mockClear();
+
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const { registerAuthCommands } = await import('../commands/auth.ts');
+    const program = new Command();
+    registerAuthCommands(program);
+
+    await program.parseAsync(['node', 'douban', 'whoami', '--json']);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(stdout.mock.calls[0]?.[0]))).toMatchObject({
+      id: 'alice',
+      name: 'Alice'
+    });
+  });
+
   it('prints provider warnings while redacting returned cookie values', async () => {
     const reader = vi.fn().mockResolvedValue({
       cookies: [

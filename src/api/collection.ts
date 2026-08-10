@@ -20,7 +20,6 @@ export interface UserCollectionPageOptions {
   status: CollectionStatus;
   start?: number;
   count?: number;
-  cookies?: string;
 }
 
 export interface UserCollectionPage {
@@ -143,7 +142,10 @@ export function parseUserCollectionPageHtml(
   };
 }
 
-export async function getUserCollectionPage(options: UserCollectionPageOptions): Promise<UserCollectionPage> {
+async function loadUserCollectionPage(
+  options: UserCollectionPageOptions,
+  cookies?: string
+): Promise<UserCollectionPage> {
   const userId = options.userId.trim();
   if (!userId) throw new Error('用户 ID 不能为空');
   const start = options.start ?? 0;
@@ -170,7 +172,7 @@ export async function getUserCollectionPage(options: UserCollectionPageOptions):
     try {
       const html = await fetchHtml(pageUrl, {
         Referer: `${base}/people/${encodedUserId}/${options.status}/`,
-        ...(options.cookies ? { Cookie: options.cookies } : {})
+        ...(cookies ? { Cookie: cookies } : {})
       });
       page = parseUserCollectionPageHtml(html, options.kind, pageUrl);
     } catch (error) {
@@ -240,4 +242,17 @@ export async function getUserCollectionPage(options: UserCollectionPageOptions):
     partial,
     warnings
   };
+}
+
+export function getUserCollectionPage(options: UserCollectionPageOptions): Promise<UserCollectionPage> {
+  return loadUserCollectionPage(options);
+}
+
+export function loadAuthenticatedUserCollectionPage(
+  options: UserCollectionPageOptions,
+  cookies: string
+): Promise<UserCollectionPage> {
+  const cookieHeader = cookies.trim();
+  if (!cookieHeader) throw new Error('登录 Cookie 不能为空');
+  return loadUserCollectionPage(options, cookieHeader);
 }

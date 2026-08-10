@@ -1,14 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
-import { ensureAuth } from '../auth.js';
-import {
-  createReview,
-  followUser,
-  getCollectionRecords,
-  getCurrentUserProfile,
-  getFeed,
-  unfollowUser
-} from '../api/index.js';
+import { ensureAuth, type VerifiedAuthSession } from '../auth.js';
+import { getCollectionRecords, getFeed } from '../api/account.js';
+import { createReview, followUser, unfollowUser } from '../api/mutations.js';
 import { secureAtomicWriteFile } from '../storage/secure-file.js';
 import { withErrorHandler } from '../utils/error.js';
 import { isNumericId, parsePositiveInt } from '../utils/parsing.js';
@@ -22,6 +16,14 @@ interface StatResult {
   total: number;
   byMonth: number[];
   avgScore: string;
+}
+
+function currentUserProfile(session: VerifiedAuthSession) {
+  return {
+    id: session.accountId,
+    name: session.accountName,
+    url: `https://www.douban.com/people/${session.accountId}/`
+  };
 }
 
 function parseMovieId(value: string): string {
@@ -201,7 +203,7 @@ export function registerSocialCommands(program: Command): void {
       }
 
       const auth = await withSpinner('正在检查登录状态...', () => ensureAuth(), !opts.json);
-      const me = await withSpinner('正在识别当前用户...', () => getCurrentUserProfile(auth.cookies), !opts.json);
+      const me = currentUserProfile(auth);
       const records = await withSpinner(
         `正在读取 ${me.id} 的看过记录...`,
         () => getCollectionRecords(me.id, 'collect', 1000, auth.cookies),
@@ -246,7 +248,7 @@ export function registerSocialCommands(program: Command): void {
       }
 
       const auth = await withSpinner('正在检查登录状态...', () => ensureAuth(), true);
-      const me = await withSpinner('正在识别当前用户...', () => getCurrentUserProfile(auth.cookies), true);
+      const me = currentUserProfile(auth);
 
       const tasks: Array<{ status: 'collect' | 'wish' | 'do'; text: string }> = [
         { status: 'collect', text: '正在获取看过记录...' },

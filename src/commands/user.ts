@@ -1,8 +1,9 @@
 import path from 'node:path';
 import { chmodSync, lstatSync, readFileSync, unlinkSync } from 'node:fs';
 import { Command } from 'commander';
-import { getCachedAuthSession } from '../auth.js';
-import { getCurrentUserProfile, getUserCollection, getUserCollectionPage } from '../api/index.js';
+import { ensureAuth } from '../auth.js';
+import { getUserCollectionPage } from '../api/collection.js';
+import { getUserCollection } from '../api/user.js';
 import { withErrorHandler } from '../utils/error.js';
 import { parsePositiveInt } from '../utils/parsing.js';
 import { withSpinner } from '../utils/spinner.js';
@@ -232,13 +233,9 @@ export function registerUserCommands(program: Command): void {
       let userId = config.user?.trim();
 
       if (!userId) {
-        const cached = getCachedAuthSession();
-        if (!cached) {
-          throw new Error('未配置默认用户，也没有本地登录态。请先运行 douban login 或 douban config --user <id>');
-        }
         try {
-          const profile = await withSpinner('正在识别当前登录用户...', () => getCurrentUserProfile(cached.cookies), !opts.json);
-          userId = profile.id;
+          const auth = await withSpinner('正在识别当前登录用户...', () => ensureAuth(), !opts.json);
+          userId = auth.accountId;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           throw new Error(`本地登录态无法识别当前账号：${message}。请重新运行 douban login 或配置 --user`, {

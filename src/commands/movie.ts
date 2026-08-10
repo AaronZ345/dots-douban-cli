@@ -11,9 +11,9 @@ import {
   getRatingStats,
   getReviews,
   getTop250,
-  getWeekly,
-  searchMovies
-} from '../api/index.js';
+  getWeekly
+} from '../api/movie.js';
+import { searchMovies } from '../api/search.js';
 import { withErrorHandler } from '../utils/error.js';
 import { isNumericId, parseNonNegativeInt, parsePositiveInt } from '../utils/parsing.js';
 import { withSpinner } from '../utils/spinner.js';

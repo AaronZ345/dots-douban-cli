@@ -21,13 +21,19 @@ src/index.ts -> commands/* -> api/* -> api/common.ts -> api/http/* -> decoder/pa
 Authenticated writes:
 
 ```text
-commands/* -> src/auth.ts -> cached account verification -> api/authenticated.ts -> Douban
+commands/* -> src/auth.ts -> cached account verification -> api/mutations.ts -> Douban
+```
+
+Authenticated reads:
+
+```text
+commands/* -> src/auth.ts -> api/account.ts -> Douban
 ```
 
 Exports:
 
 ```text
-commands/* -> collection/authenticated API -> serializer -> storage/secure-file.ts
+commands/* -> api/account.ts -> serializer -> storage/secure-file.ts
 ```
 
 ## Repository map
@@ -46,8 +52,10 @@ commands/* -> collection/authenticated API -> serializer -> storage/secure-file.
   - `movie.ts`, `book.ts`, `search.ts`, `list.ts` — domain-specific read APIs.
   - `book-parsers.ts` — pure book HTML parsers.
   - `subject.ts` — behavior genuinely shared by movies and books, such as ratings, comments, and reviews.
-  - `collection.ts` — shared movie/book collection parsing and cursor-based pagination.
-  - `authenticated.ts` — session validation and non-idempotent account endpoints.
+  - `collection.ts` — shared movie/book collection parsing and cursor-based pagination; its authenticated loader is internal to `account.ts`.
+  - `account.ts` — authenticated profile, feed, and collection reads.
+  - `mutations.ts` — CSRF resolution and non-idempotent account endpoints.
+  - `index.ts` — public unauthenticated read APIs only; authenticated modules are imported directly.
   - `user.ts` — compatibility wrapper for older movie collection callers.
 - `src/auth.ts` — browser-cookie login, account selection, identity verification, and encrypted auth cache.
 - `src/storage/secure-file.ts` — atomic private-file writes with restrictive permissions.
@@ -63,7 +71,8 @@ commands/* -> collection/authenticated API -> serializer -> storage/secure-file.
 - Douban HTML or JSON schema changes: change the owning `src/api/` module or parser and add a focused fixture/decoder test.
 - Movie/book shared ratings, comments, reviews, or collections: use `subject.ts` or `collection.ts` only when both domains have the same contract.
 - Timeout, retry, redirect, challenge, or content-type behavior: change `src/api/http/` and `api-reliability.test.ts`.
-- Login, Cookie, or account mutations: change `src/auth.ts`, `src/api/authenticated.ts`, or `src/storage/`; tests must use mocks.
+- Login or Cookie handling: change `src/auth.ts`, `src/api/account.ts`, or `src/storage/`; tests must use mocks.
+- Account mutations or CSRF handling: change `src/api/mutations.ts`; commands import it directly rather than through `src/api/index.ts`.
 - Interactive pagination: change `src/utils/pagination.ts` and the command's page loader.
 - User-visible behavior: update `README.md` and the relevant CLI smoke or command test.
 - External skill packaging: update `skills/douban-cli/`; derive command behavior from the CLI, README, and tests.
@@ -71,6 +80,7 @@ commands/* -> collection/authenticated API -> serializer -> storage/secure-file.
 ## Architectural invariants
 
 - `src/commands/` does not call `fetch` directly.
+- `src/api/index.ts` exposes public reads only; `account.ts`, `mutations.ts`, and `common.ts` are explicit internal imports.
 - Only idempotent reads may be retried automatically; account writes must not be blindly retried.
 - Treat all Douban HTML and JSON as untrusted input and validate it at the API boundary.
 - Preserve successfully fetched pages or fields when a later source fails; surface partial results with warnings.

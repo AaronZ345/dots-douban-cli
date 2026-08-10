@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { getCurrentUserProfile } from './api/authenticated.js';
+import { getCurrentUserProfile } from './api/account.js';
 import { resolveCliStoragePaths } from './storage/paths.js';
 import {
   ensurePrivateDirectory,
@@ -21,6 +21,11 @@ export interface AuthSession {
   accountId?: string;
   accountName?: string;
   updatedAt: string;
+}
+
+export interface VerifiedAuthSession extends AuthSession {
+  accountId: string;
+  accountName: string;
 }
 
 interface EncryptedAuthCache {
@@ -520,7 +525,7 @@ async function waitForEnter(): Promise<void> {
   }
 }
 
-async function verifyAuthSession(session: AuthSession): Promise<AuthSession> {
+async function verifyAuthSession(session: AuthSession): Promise<VerifiedAuthSession> {
   const profile = await getCurrentUserProfile(session.cookies);
   return {
     ...session,
@@ -529,8 +534,8 @@ async function verifyAuthSession(session: AuthSession): Promise<AuthSession> {
   };
 }
 
-async function selectVerifiedSession(candidates: AuthSession[]): Promise<AuthSession> {
-  const verified: AuthSession[] = [];
+async function selectVerifiedSession(candidates: AuthSession[]): Promise<VerifiedAuthSession> {
+  const verified: VerifiedAuthSession[] = [];
   const failedSources: string[] = [];
 
   for (const candidate of candidates) {
@@ -550,9 +555,9 @@ async function selectVerifiedSession(candidates: AuthSession[]): Promise<AuthSes
     throw new Error(`部分浏览器登录态无法验证（${failedSources.join(', ')}），请使用 --browser 并按需配合 --profile 明确选择`);
   }
 
-  const accounts = new Map<string, AuthSession[]>();
+  const accounts = new Map<string, VerifiedAuthSession[]>();
   for (const session of verified) {
-    const accountId = session.accountId || '';
+    const accountId = session.accountId;
     const bucket = accounts.get(accountId) || [];
     bucket.push(session);
     accounts.set(accountId, bucket);
@@ -571,14 +576,14 @@ async function selectVerifiedSession(candidates: AuthSession[]): Promise<AuthSes
 export async function loginFromBrowserCookies(
   options: LoginOptions = {},
   reader?: BrowserCookieReader
-): Promise<AuthSession> {
+): Promise<VerifiedAuthSession> {
   const candidates = await extractFromBrowsers(options, reader);
   const selected = await selectVerifiedSession(candidates);
   saveAuthCache(selected);
   return selected;
 }
 
-export async function loginWithBrowser(options: LoginOptions = {}): Promise<AuthSession> {
+export async function loginWithBrowser(options: LoginOptions = {}): Promise<VerifiedAuthSession> {
   if (options.profile && !options.browser) {
     throw new Error('--profile 必须与 --browser 一起使用');
   }
@@ -595,13 +600,13 @@ export async function detectAuthSession(): Promise<AuthSession | null> {
   return readAuthCache();
 }
 
-export async function ensureAuth(): Promise<AuthSession> {
+export async function ensureAuth(): Promise<VerifiedAuthSession> {
   const cached = readAuthCache();
   if (!cached) {
     throw new Error('未找到本地登录态，请先运行 douban login');
   }
 
-  let verified: AuthSession;
+  let verified: VerifiedAuthSession;
   try {
     verified = await verifyAuthSession(cached);
   } catch (error) {
@@ -612,7 +617,7 @@ export async function ensureAuth(): Promise<AuthSession> {
 
   if (cached.accountId && cached.accountId !== verified.accountId) {
     clearAuthCache();
-    throw new Error(`登录账号校验失败：缓存账号 ${cached.accountId}，当前账号 ${verified.accountId || 'unknown'}。请重新运行 douban login`);
+    throw new Error(`登录账号校验失败：缓存账号 ${cached.accountId}，当前账号 ${verified.accountId}。请重新运行 douban login`);
   }
 
   if (cached.accountId !== verified.accountId || cached.accountName !== verified.accountName) {

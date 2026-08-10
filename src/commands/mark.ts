@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
 import { ensureAuth } from '../auth.js';
-import { SUBJECT_ACTIONS, unmarkSubject, updateSubjectInterest } from '../api/index.js';
+import { SUBJECT_ACTIONS, unmarkSubject, updateSubjectInterest } from '../api/mutations.js';
 import { withErrorHandler } from '../utils/error.js';
 import { isNumericId } from '../utils/parsing.js';
 import { withSpinner } from '../utils/spinner.js';

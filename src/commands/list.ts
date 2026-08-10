@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { getHotLists } from '../api/index.js';
+import { getHotLists } from '../api/list.js';
 import { withErrorHandler } from '../utils/error.js';
 import { parsePositiveInt } from '../utils/parsing.js';
 import { withSpinner } from '../utils/spinner.js';
