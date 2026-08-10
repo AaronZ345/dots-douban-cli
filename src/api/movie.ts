@@ -1,4 +1,4 @@
-import { BASE, cleanText, extractField, fetchHtml, fetchJson, isChallengePage, normalizeTitle } from './common.js';
+import { BASE, cleanText, extractField, fetchHtml, fetchJson, isChallengePage, normalizeTitle, ResponseSchemaError } from './common.js';
 import {
   getSubjectComments,
   getSubjectRatingStats,
@@ -51,6 +51,49 @@ export interface MovieDetail {
   url: string;
   episodes_count?: number;
   episodes_info?: string;
+}
+
+interface MovieAbstractResponse {
+  r?: number;
+  subject?: {
+    title?: string;
+    year?: string;
+    original_title?: string;
+    rate?: string;
+    directors?: string[];
+    actors?: string[];
+    genres?: string[];
+    countries?: string[];
+    durations?: string[];
+    languages?: string[];
+    aka?: string[];
+    pubdate?: string[];
+    comment_count?: number;
+    review_count?: number;
+    url?: string;
+  };
+}
+
+interface MobileMovieResponse {
+  type?: string;
+  title?: string;
+  year?: string | number;
+  original_title?: string;
+  intro?: string;
+  rating?: { value?: number };
+  directors?: Array<{ name?: string }>;
+  actors?: Array<{ name?: string }>;
+  genres?: string[];
+  countries?: string[];
+  durations?: string[];
+  languages?: string[];
+  aka?: string[];
+  pubdate?: string[];
+  comment_count?: number;
+  review_count?: number;
+  episodes_count?: number;
+  episodes_info?: string;
+  url?: string;
 }
 
 export interface ComingItem {
@@ -134,6 +177,91 @@ function assignArrayIfNotEmpty(target: MovieDetail, key: keyof Pick<MovieDetail,
   if (list.length > 0) {
     target[key] = list;
   }
+}
+
+function assignArrayIfEmpty(target: MovieDetail, key: keyof Pick<MovieDetail, 'genres' | 'countries' | 'durations' | 'languages' | 'aka' | 'pubdate'>, value: unknown): void {
+  if (target[key].length === 0) assignArrayIfNotEmpty(target, key, value);
+}
+
+function emptyMovieDetail(id: string, url: string): MovieDetail {
+  return {
+    id,
+    title: '',
+    year: '',
+    original_title: '',
+    rating: '-',
+    directors: [],
+    actors: [],
+    genres: [],
+    countries: [],
+    durations: [],
+    languages: [],
+    aka: [],
+    pubdate: [],
+    comment_count: 0,
+    review_count: 0,
+    summary: '',
+    url
+  };
+}
+
+function applyAbstractDetail(detail: MovieDetail, response: MovieAbstractResponse): void {
+  const subject = response.subject;
+  if (!subject) return;
+  if (!detail.title && subject.title) detail.title = normalizeTitle(subject.title);
+  if (!detail.year && subject.year) detail.year = cleanText(subject.year);
+  if (!detail.original_title && subject.original_title) detail.original_title = normalizeTitle(subject.original_title);
+  if (detail.rating === '-' && subject.rate) detail.rating = subject.rate;
+  if (detail.directors.length === 0 && Array.isArray(subject.directors)) {
+    detail.directors = sanitizeList(subject.directors);
+  }
+  if (detail.actors.length === 0 && Array.isArray(subject.actors)) {
+    detail.actors = sanitizeList(subject.actors);
+  }
+  assignArrayIfEmpty(detail, 'genres', subject.genres);
+  assignArrayIfEmpty(detail, 'countries', subject.countries);
+  assignArrayIfEmpty(detail, 'durations', subject.durations);
+  assignArrayIfEmpty(detail, 'languages', subject.languages);
+  assignArrayIfEmpty(detail, 'aka', subject.aka);
+  assignArrayIfEmpty(detail, 'pubdate', subject.pubdate);
+  if (detail.comment_count === 0 && typeof subject.comment_count === 'number' && Number.isFinite(subject.comment_count)) {
+    detail.comment_count = Math.max(0, Math.trunc(subject.comment_count));
+  }
+  if (detail.review_count === 0 && typeof subject.review_count === 'number' && Number.isFinite(subject.review_count)) {
+    detail.review_count = Math.max(0, Math.trunc(subject.review_count));
+  }
+}
+
+function applyMobileDetail(detail: MovieDetail, response: MobileMovieResponse): void {
+  if (response.title) detail.title = normalizeTitle(response.title);
+  if (response.year) detail.year = cleanText(String(response.year));
+  if (response.original_title) detail.original_title = normalizeTitle(response.original_title);
+  if (typeof response.rating?.value === 'number' && Number.isFinite(response.rating.value)) {
+    detail.rating = response.rating.value.toFixed(1);
+  }
+  if (detail.directors.length === 0 && Array.isArray(response.directors)) {
+    detail.directors = response.directors.map((person) => cleanText(person.name || '')).filter(Boolean);
+  }
+  if (detail.actors.length === 0 && Array.isArray(response.actors)) {
+    detail.actors = response.actors.map((person) => cleanText(person.name || '')).filter(Boolean);
+  }
+  assignArrayIfEmpty(detail, 'genres', response.genres);
+  assignArrayIfEmpty(detail, 'countries', response.countries);
+  assignArrayIfEmpty(detail, 'durations', response.durations);
+  assignArrayIfEmpty(detail, 'languages', response.languages);
+  assignArrayIfEmpty(detail, 'aka', response.aka);
+  assignArrayIfEmpty(detail, 'pubdate', response.pubdate);
+  if (detail.comment_count === 0 && typeof response.comment_count === 'number' && Number.isFinite(response.comment_count)) {
+    detail.comment_count = Math.max(0, Math.trunc(response.comment_count));
+  }
+  if (detail.review_count === 0 && typeof response.review_count === 'number' && Number.isFinite(response.review_count)) {
+    detail.review_count = Math.max(0, Math.trunc(response.review_count));
+  }
+  if (!detail.summary && response.intro) detail.summary = cleanText(response.intro);
+  if (typeof response.episodes_count === 'number' && Number.isFinite(response.episodes_count) && response.episodes_count > 0) {
+    detail.episodes_count = Math.trunc(response.episodes_count);
+  }
+  if (!detail.episodes_info && response.episodes_info) detail.episodes_info = cleanText(response.episodes_info);
 }
 
 function parseMovieDetailFromHtml(id: string, html: string): MovieDetail | null {
@@ -232,202 +360,49 @@ export async function getMovieDetail(id: string): Promise<MovieDetail> {
   if (!/^\d+$/.test(movieId)) throw new Error('电影 ID 必须是纯数字');
 
   const subjectUrl = `${BASE}/subject/${movieId}/`;
-
-  try {
-    const html = await fetchHtml(subjectUrl, { Referer: BASE });
-    const parsed = parseMovieDetailFromHtml(movieId, html);
-    if (parsed) return parsed;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    debug('movie', `主页面解析失败，进入回退逻辑: ${message}`);
-  }
-
-  const detail: MovieDetail = {
-    id: movieId,
-    title: '',
-    year: '',
-    original_title: '',
-    rating: '-',
-    directors: [],
-    actors: [],
-    genres: [],
-    countries: [],
-    durations: [],
-    languages: [],
-    aka: [],
-    pubdate: [],
-    comment_count: 0,
-    review_count: 0,
-    summary: '',
-    url: subjectUrl
-  };
-
-  try {
-    const abstract = await fetchJson<{
-      r?: number;
-      subject?: {
-        title?: string;
-        year?: string;
-        original_title?: string;
-        rate?: string;
-        directors?: string[];
-        actors?: string[];
-        genres?: string[];
-        countries?: string[];
-        durations?: string[];
-        languages?: string[];
-        aka?: string[];
-        pubdate?: string[];
-        comment_count?: number;
-        review_count?: number;
-        url?: string;
-      };
-    }>(`${BASE}/j/subject_abstract?subject_id=${movieId}`, { Referer: BASE });
-
-    const subject = abstract.subject;
-    if (subject) {
-      if (subject.title) detail.title = normalizeTitle(subject.title);
-      if (subject.year) detail.year = cleanText(subject.year);
-      if (subject.original_title) detail.original_title = normalizeTitle(subject.original_title);
-      if (subject.rate) detail.rating = subject.rate;
-      if (Array.isArray(subject.directors)) detail.directors = subject.directors.map((name) => cleanText(name));
-      if (Array.isArray(subject.actors)) detail.actors = subject.actors.map((name) => cleanText(name));
-      assignArrayIfNotEmpty(detail, 'genres', subject.genres);
-      assignArrayIfNotEmpty(detail, 'countries', subject.countries);
-      assignArrayIfNotEmpty(detail, 'durations', subject.durations);
-      assignArrayIfNotEmpty(detail, 'languages', subject.languages);
-      assignArrayIfNotEmpty(detail, 'aka', subject.aka);
-      assignArrayIfNotEmpty(detail, 'pubdate', subject.pubdate);
-      if (typeof subject.comment_count === 'number' && Number.isFinite(subject.comment_count)) {
-        detail.comment_count = Math.max(0, Math.trunc(subject.comment_count));
-      }
-      if (typeof subject.review_count === 'number' && Number.isFinite(subject.review_count)) {
-        detail.review_count = Math.max(0, Math.trunc(subject.review_count));
-      }
-      if (subject.url) detail.url = subject.url;
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    debug('movie', `subject_abstract 回退失败: ${message}`);
-  }
-
-  try {
-    const mobile = await fetchJson<{
-      title?: string;
-      year?: string | number;
-      original_title?: string;
-      intro?: string;
-      rating?: { value?: number };
-      directors?: Array<{ name?: string }>;
-      actors?: Array<{ name?: string }>;
-      genres?: string[];
-      countries?: string[];
-      durations?: string[];
-      languages?: string[];
-      aka?: string[];
-      pubdate?: string[];
-      comment_count?: number;
-      review_count?: number;
-      url?: string;
-    }>(`https://m.douban.com/rexxar/api/v2/movie/${movieId}`, {
+  const [htmlResult, abstractResult, mobileResult] = await Promise.allSettled([
+    fetchHtml(subjectUrl, { Referer: BASE }).then((html) => {
+      const parsed = parseMovieDetailFromHtml(movieId, html);
+      if (!parsed) throw new ResponseSchemaError('电影详情页未解析出标题', subjectUrl);
+      return parsed;
+    }),
+    fetchJson<MovieAbstractResponse>(`${BASE}/j/subject_abstract?subject_id=${movieId}`, { Referer: BASE }),
+    fetchJson<MobileMovieResponse>(`https://m.douban.com/rexxar/api/v2/movie/${movieId}`, {
       Referer: `https://m.douban.com/movie/subject/${movieId}/`
-    });
+    })
+  ]);
 
-    if (mobile.title) detail.title = normalizeTitle(mobile.title);
-    if (mobile.year) detail.year = cleanText(String(mobile.year));
-    if (mobile.original_title) detail.original_title = normalizeTitle(mobile.original_title);
-    if (typeof mobile.rating?.value === 'number') detail.rating = mobile.rating.value.toFixed(1);
-    if (Array.isArray(mobile.directors) && mobile.directors.length > 0) {
-      detail.directors = mobile.directors
-        .map((person) => cleanText(person.name || ''))
-        .filter(Boolean);
-    }
-    if (Array.isArray(mobile.actors) && mobile.actors.length > 0) {
-      detail.actors = mobile.actors
-        .map((person) => cleanText(person.name || ''))
-        .filter(Boolean);
-    }
-    assignArrayIfNotEmpty(detail, 'genres', mobile.genres);
-    assignArrayIfNotEmpty(detail, 'countries', mobile.countries);
-    assignArrayIfNotEmpty(detail, 'durations', mobile.durations);
-    assignArrayIfNotEmpty(detail, 'languages', mobile.languages);
-    assignArrayIfNotEmpty(detail, 'aka', mobile.aka);
-    assignArrayIfNotEmpty(detail, 'pubdate', mobile.pubdate);
-    if (typeof mobile.comment_count === 'number' && Number.isFinite(mobile.comment_count)) {
-      detail.comment_count = Math.max(0, Math.trunc(mobile.comment_count));
-    }
-    if (typeof mobile.review_count === 'number' && Number.isFinite(mobile.review_count)) {
-      detail.review_count = Math.max(0, Math.trunc(mobile.review_count));
-    }
-    if (mobile.intro) detail.summary = cleanText(mobile.intro);
-    if (mobile.url) detail.url = mobile.url;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    debug('movie', `mobile API 回退失败: ${message}`);
+  const detail = htmlResult.status === 'fulfilled'
+    ? { ...htmlResult.value }
+    : emptyMovieDetail(movieId, subjectUrl);
+
+  if (htmlResult.status === 'rejected') {
+    debug('movie', `主页面解析失败: ${htmlResult.reason instanceof Error ? htmlResult.reason.message : String(htmlResult.reason)}`);
+  }
+  if (abstractResult.status === 'fulfilled') {
+    applyAbstractDetail(detail, abstractResult.value);
+  } else {
+    debug('movie', `subject_abstract 回退失败: ${abstractResult.reason instanceof Error ? abstractResult.reason.message : String(abstractResult.reason)}`);
   }
 
-  // Try TV API for episodes count (works for TV shows)
-  try {
-    const tv = await fetchJson<{
-      title?: string;
-      year?: string | number;
-      original_title?: string;
-      intro?: string;
-      rating?: { value?: number };
-      directors?: Array<{ name?: string }>;
-      actors?: Array<{ name?: string }>;
-      genres?: string[];
-      countries?: string[];
-      durations?: string[];
-      languages?: string[];
-      aka?: string[];
-      pubdate?: string[];
-      comment_count?: number;
-      review_count?: number;
-      episodes_count?: number;
-      episodes_info?: string;
-      url?: string;
-    }>(`https://m.douban.com/rexxar/api/v2/tv/${movieId}`, {
-      Referer: `https://m.douban.com/movie/subject/${movieId}/`
-    });
+  let mobile: MobileMovieResponse | undefined;
+  if (mobileResult.status === 'fulfilled') {
+    mobile = mobileResult.value;
+    applyMobileDetail(detail, mobile);
+  } else {
+    debug('movie', `mobile API 回退失败: ${mobileResult.reason instanceof Error ? mobileResult.reason.message : String(mobileResult.reason)}`);
+  }
 
-    // Only use TV data if we got valid response
-    if (tv.title) {
-      if (!detail.title) detail.title = normalizeTitle(tv.title);
-      if (!detail.year && tv.year) detail.year = cleanText(String(tv.year));
-      if (!detail.original_title && tv.original_title) detail.original_title = normalizeTitle(tv.original_title);
-      if (detail.rating === '-' && typeof tv.rating?.value === 'number') detail.rating = tv.rating.value.toFixed(1);
-      if (detail.directors.length === 0 && Array.isArray(tv.directors) && tv.directors.length > 0) {
-        detail.directors = tv.directors.map((person) => cleanText(person.name || '')).filter(Boolean);
-      }
-      if (detail.actors.length === 0 && Array.isArray(tv.actors) && tv.actors.length > 0) {
-        detail.actors = tv.actors.map((person) => cleanText(person.name || '')).filter(Boolean);
-      }
-      if (detail.genres.length === 0) assignArrayIfNotEmpty(detail, 'genres', tv.genres);
-      if (detail.countries.length === 0) assignArrayIfNotEmpty(detail, 'countries', tv.countries);
-      if (detail.durations.length === 0) assignArrayIfNotEmpty(detail, 'durations', tv.durations);
-      if (detail.languages.length === 0) assignArrayIfNotEmpty(detail, 'languages', tv.languages);
-      if (detail.aka.length === 0) assignArrayIfNotEmpty(detail, 'aka', tv.aka);
-      if (detail.pubdate.length === 0) assignArrayIfNotEmpty(detail, 'pubdate', tv.pubdate);
-      if (detail.comment_count === 0 && typeof tv.comment_count === 'number' && Number.isFinite(tv.comment_count)) {
-        detail.comment_count = Math.max(0, Math.trunc(tv.comment_count));
-      }
-      if (detail.review_count === 0 && typeof tv.review_count === 'number' && Number.isFinite(tv.review_count)) {
-        detail.review_count = Math.max(0, Math.trunc(tv.review_count));
-      }
-      if (!detail.summary && tv.intro) detail.summary = cleanText(tv.intro);
-      if (tv.url) detail.url = tv.url;
+  const shouldFetchTv = mobile?.type === 'tv' && !detail.episodes_count;
+  if (shouldFetchTv) {
+    try {
+      const tv = await fetchJson<MobileMovieResponse>(`https://m.douban.com/rexxar/api/v2/tv/${movieId}`, {
+        Referer: `https://m.douban.com/movie/subject/${movieId}/`
+      });
+      applyMobileDetail(detail, tv);
+    } catch (error) {
+      debug('movie', `TV API 补充失败: ${error instanceof Error ? error.message : String(error)}`);
     }
-    // Always try to get episodes_count and episodes_info from TV API
-    if (typeof tv.episodes_count === 'number' && Number.isFinite(tv.episodes_count) && tv.episodes_count > 0) {
-      detail.episodes_count = tv.episodes_count;
-    }
-    if (tv.episodes_info) {
-      detail.episodes_info = cleanText(tv.episodes_info);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    debug('movie', `TV API 回退失败: ${message}`);
   }
 
   if (!detail.title) throw new Error(`获取电影详情失败，ID=${movieId}`);
@@ -441,10 +416,11 @@ export async function getMovieDetail(id: string): Promise<MovieDetail> {
  * @param limit - number of results
  */
 export async function getHot(type: 'movie' | 'tv', tag: string, limit = 20): Promise<Subject[]> {
-  if (!Number.isFinite(limit) || limit <= 0) return [];
+  if (!Number.isInteger(limit) || limit <= 0) return [];
   const url = `${BASE}/j/search_subjects?type=${type}&tag=${encodeURIComponent(tag)}&page_limit=${limit}&page_start=0`;
   const data = await fetchJson<{ subjects: Subject[] }>(url);
-  return Array.isArray(data.subjects) ? data.subjects : [];
+  if (!Array.isArray(data.subjects)) throw new ResponseSchemaError('热门影视接口返回格式异常', url);
+  return data.subjects;
 }
 
 /**
@@ -453,12 +429,12 @@ export async function getHot(type: 'movie' | 'tv', tag: string, limit = 20): Pro
  * @param limit - number of results
  */
 export async function getRank(typeId: number, limit = 20): Promise<RankItem[]> {
-  if (!Number.isFinite(limit) || limit <= 0) return [];
+  if (!Number.isInteger(limit) || limit <= 0) return [];
   const url = `${BASE}/j/chart/top_list?type=${typeId}&interval_id=100:90&start=0&limit=${limit}`;
   const data = await fetchJson<RankItem[] | { data?: RankItem[] }>(url);
   if (Array.isArray(data)) return data;
   if (Array.isArray(data.data)) return data.data;
-  return [];
+  throw new ResponseSchemaError('分类榜单接口返回格式异常', url);
 }
 
 /** Genre type mapping */
@@ -485,17 +461,24 @@ export interface Top250Item {
 }
 
 export async function getTop250(start = 0, limit = 25): Promise<Top250Item[]> {
-  if (!Number.isFinite(limit) || limit <= 0) return [];
+  if (!Number.isInteger(start) || start < 0) throw new Error('start 必须是非负整数');
+  if (!Number.isInteger(limit) || limit <= 0) return [];
   const results: Top250Item[] = [];
   const seen = new Set<string>();
-  let pageStart = Math.max(0, start);
+  let pageStart = start;
 
   while (results.length < limit) {
     const html = await fetchHtml(`${BASE}/top250?start=${pageStart}`);
+    if (isChallengePage(html)) throw new Error('电影 Top250 页面触发了反爬挑战，暂时无法解析');
 
     // Split by item blocks
     const items = html.split('<div class="item">').slice(1);
-    if (items.length === 0) break;
+    if (items.length === 0) {
+      if (pageStart < 250) {
+        throw new ResponseSchemaError('电影 Top250 页面未解析出预期条目', `${BASE}/top250?start=${pageStart}`);
+      }
+      break;
+    }
 
     for (const item of items) {
       if (results.length >= limit) break;
@@ -560,7 +543,9 @@ export interface NowPlayingItem {
 }
 
 export async function getNowPlaying(city = 'beijing'): Promise<NowPlayingItem[]> {
-  const html = await fetchHtml(`${BASE}/cinema/nowplaying/${city}/`);
+  const url = `${BASE}/cinema/nowplaying/${city}/`;
+  const html = await fetchHtml(url);
+  if (isChallengePage(html)) throw new Error('正在上映页面触发了反爬挑战，暂时无法解析');
   const results: NowPlayingItem[] = [];
 
   // Match the whole <li> tag to extract all data-* attributes
@@ -578,7 +563,7 @@ export async function getNowPlaying(city = 'beijing'): Promise<NowPlayingItem[]>
     if (!id || !title) continue;
 
     const actors = readAttr(tag, 'actors')
-      .split(/[，,]/)
+      .split(/\s*[/／，,]\s*/)
       .map((s) => cleanText(s))
       .filter(Boolean);
     const voteStr = readAttr(tag, 'votecount').replace(/\D/g, '');
@@ -597,6 +582,9 @@ export async function getNowPlaying(city = 'beijing'): Promise<NowPlayingItem[]>
       wish_count: wishStr ? Number(wishStr) : 0
     });
   }
+  if (results.length === 0 && !/暂无|没有正在上映/.test(html)) {
+    throw new ResponseSchemaError('正在上映页面未解析出预期条目', url);
+  }
   return results;
 }
 
@@ -604,7 +592,7 @@ export async function getNowPlaying(city = 'beijing'): Promise<NowPlayingItem[]>
  * Get coming soon movies from https://movie.douban.com/coming
  */
 export async function getComing(limit = 20): Promise<ComingItem[]> {
-  if (!Number.isFinite(limit) || limit <= 0) return [];
+  if (!Number.isInteger(limit) || limit <= 0) return [];
   const html = await fetchHtml(`${BASE}/coming`, { Referer: BASE });
   if (isChallengePage(html)) throw new Error('即将上映页面触发了反爬挑战，暂时无法解析');
 
@@ -625,6 +613,10 @@ export async function getComing(limit = 20): Promise<ComingItem[]> {
     });
   }
 
+  if (results.length === 0) {
+    throw new ResponseSchemaError('即将上映页面未解析出预期条目', `${BASE}/coming`);
+  }
+
   return results;
 }
 
@@ -632,7 +624,7 @@ export async function getComing(limit = 20): Promise<ComingItem[]> {
  * Get weekly reputation chart from https://movie.douban.com/chart
  */
 export async function getWeekly(limit = 10): Promise<WeeklyItem[]> {
-  if (!Number.isFinite(limit) || limit <= 0) return [];
+  if (!Number.isInteger(limit) || limit <= 0) return [];
   const html = await fetchHtml(`${BASE}/chart`, { Referer: BASE });
   if (isChallengePage(html)) throw new Error('一周口碑榜页面触发了反爬挑战，暂时无法解析');
 
@@ -655,6 +647,10 @@ export async function getWeekly(limit = 10): Promise<WeeklyItem[]> {
       trend,
       url: `https://movie.douban.com/subject/${match[2]}/`
     });
+  }
+
+  if (results.length === 0) {
+    throw new ResponseSchemaError('一周口碑榜区域存在但未解析出条目', `${BASE}/chart`);
   }
 
   return results;

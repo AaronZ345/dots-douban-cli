@@ -1,24 +1,24 @@
+import { HttpClient, isChallengeHtml, isLoginHtml } from './http/client.js';
+
+export { HttpClient } from './http/client.js';
+export { HttpRequestError, ResponseSchemaError } from './http/errors.js';
+
 export const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
 export const BASE = 'https://movie.douban.com';
 export const BOOK_BASE = 'https://book.douban.com';
 export const FETCH_TIMEOUT_MS = 30000;
 
+const httpClient = new HttpClient({
+  defaultHeaders: { 'User-Agent': UA },
+  timeoutMs: FETCH_TIMEOUT_MS
+});
+
 export async function fetchJson<T>(url: string, headers: Record<string, string> = {}): Promise<T> {
-  const res = await fetch(url, {
-    headers: { 'User-Agent': UA, ...headers },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<T>;
+  return httpClient.getJson<T>(url, headers);
 }
 
 export async function fetchHtml(url: string, headers: Record<string, string> = {}): Promise<string> {
-  const res = await fetch(url, {
-    headers: { 'User-Agent': UA, ...headers },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.text();
+  return httpClient.getHtml(url, headers);
 }
 
 export function decodeHtml(text: string): string {
@@ -45,11 +45,15 @@ export function cleanText(text: string): string {
 }
 
 export function normalizeTitle(title: string): string {
-  return cleanText(title).replace(/\s*\u200e?\([^)]*\)\s*$/, '').trim();
+  return cleanText(title).replace(/[\u200e\u200f\u202a-\u202e]/g, '').replace(/\s*\([^)]*\)\s*$/, '').trim();
 }
 
 export function isChallengePage(html: string): boolean {
-  return html.includes('<form name="sec" id="sec"') && html.includes('载入中');
+  return isChallengeHtml(html);
+}
+
+export function isLoginPage(html: string): boolean {
+  return isLoginHtml(html);
 }
 
 export function escapeRegExp(text: string): string {

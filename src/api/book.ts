@@ -4,7 +4,8 @@ import {
   fetchHtml,
   fetchJson,
   isChallengePage,
-  normalizeTitle
+  normalizeTitle,
+  ResponseSchemaError
 } from './common.js';
 import {
   parseBookDetailHtml,
@@ -119,17 +120,10 @@ export const BOOK_LATEST_CATEGORIES = [
 
 export type BookTagSort = 'T' | 'R' | 'S';
 
+export const BOOK_CHART_PAGE_LIMIT = 20;
+
 function toBookItem(item: ParsedBookListItem): BookItem {
   return { ...item };
-}
-
-function uniqueById<T extends { id: string }>(items: T[]): T[] {
-  const seen = new Set<string>();
-  return items.filter((item) => {
-    if (!item.id || seen.has(item.id)) return false;
-    seen.add(item.id);
-    return true;
-  });
 }
 
 function normalizeList(value: unknown): string[] {
@@ -164,21 +158,36 @@ function normalizeCount(value: unknown): number {
   return Number.isFinite(count) && count >= 0 ? Math.trunc(count) : 0;
 }
 
+function parseNextStart(html: string, baseUrl: string): number | null {
+  const nextMatch = html.match(/<span[^>]*class=["'][^"']*\bnext\b[^"']*["'][^>]*>[\s\S]*?<a[^>]*href=["']([^"']+)["']/i);
+  if (!nextMatch?.[1]) return null;
+  try {
+    const nextStart = Number(new URL(nextMatch[1].replace(/&amp;/g, '&'), baseUrl).searchParams.get('start'));
+    return Number.isInteger(nextStart) && nextStart >= 0 ? nextStart : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Get Douban Book Top250.
  */
 export async function getBookTop250(start = 0, limit = 20): Promise<BookItem[]> {
-  if (!Number.isFinite(limit) || limit <= 0) return [];
+  if (!Number.isInteger(start) || start < 0) throw new Error('start 必须是非负整数');
+  if (!Number.isInteger(limit) || limit <= 0) return [];
 
   const results: BookItem[] = [];
   const seen = new Set<string>();
-  let pageStart = Math.max(0, Math.trunc(start));
+  let pageStart = start;
 
   while (results.length < limit) {
     const html = await fetchHtml(`${BOOK_BASE}/top250?start=${pageStart}`, { Referer: BOOK_BASE });
     if (isChallengePage(html)) throw new Error('图书 Top250 页面触发了反爬挑战，暂时无法解析');
 
     const pageItems = parseBookTop250Page(html);
+    if (pageItems.length === 0 && pageStart < 250) {
+      throw new ResponseSchemaError('图书 Top250 页面未解析出预期条目', `${BOOK_BASE}/top250?start=${pageStart}`);
+    }
     let added = 0;
     for (const item of pageItems) {
       if (seen.has(item.id)) continue;
@@ -207,7 +216,10 @@ export function getBookHot(start = 0, limit = 20): Promise<BookItem[]> {
  * Get the current monthly popular book chart.
  */
 export async function getBookChart(category = '全部', limit = 20): Promise<BookItem[]> {
-  if (!Number.isFinite(limit) || limit <= 0) return [];
+  if (!Number.isInteger(limit) || limit <= 0) return [];
+  if (limit > BOOK_CHART_PAGE_LIMIT) {
+    throw new RangeError(`热门图书榜单最多返回 ${BOOK_CHART_PAGE_LIMIT} 条，当前请求 ${limit} 条`);
+  }
   const subcat = BOOK_CHART_CATEGORIES[category];
   if (typeof subcat === 'undefined') {
     throw new Error(`不支持的榜单分类：${category}`);
@@ -216,14 +228,21 @@ export async function getBookChart(category = '全部', limit = 20): Promise<Boo
   const query = subcat ? `?subcat=${encodeURIComponent(subcat)}` : '';
   const html = await fetchHtml(`${BOOK_BASE}/chart${query}`, { Referer: BOOK_BASE });
   if (isChallengePage(html)) throw new Error('热门图书榜触发了反爬挑战，暂时无法解析');
-  return parseBookMediaList(html).slice(0, limit).map(toBookItem);
+  const items = parseBookMediaList(html);
+  if (items.length === 0) {
+    throw new ResponseSchemaError('热门图书榜页面未解析出预期条目', `${BOOK_BASE}/chart${query}`);
+  }
+  return items.slice(0, limit).map(toBookItem);
 }
 
 /**
  * Get recently published books, optionally filtered by category.
  */
 export async function getLatestBooks(category = '全部', limit = 20): Promise<BookItem[]> {
-  if (!Number.isFinite(limit) || limit <= 0) return [];
+  if (!Number.isInteger(limit) || limit <= 0) return [];
+  if (limit > BOOK_CHART_PAGE_LIMIT) {
+    throw new RangeError(`新书速递最多返回 ${BOOK_CHART_PAGE_LIMIT} 条，当前请求 ${limit} 条`);
+  }
   if (!BOOK_LATEST_CATEGORIES.includes(category as typeof BOOK_LATEST_CATEGORIES[number])) {
     throw new Error(`不支持的新书分类：${category}`);
   }
@@ -231,7 +250,11 @@ export async function getLatestBooks(category = '全部', limit = 20): Promise<B
   const query = category === '全部' ? '' : `?subcat=${encodeURIComponent(category)}`;
   const html = await fetchHtml(`${BOOK_BASE}/latest${query}`, { Referer: BOOK_BASE });
   if (isChallengePage(html)) throw new Error('新书速递页面触发了反爬挑战，暂时无法解析');
-  return parseBookMediaList(html).slice(0, limit).map(toBookItem);
+  const items = parseBookMediaList(html);
+  if (items.length === 0) {
+    throw new ResponseSchemaError('新书速递页面未解析出预期条目', `${BOOK_BASE}/latest${query}`);
+  }
+  return items.slice(0, limit).map(toBookItem);
 }
 
 /**
@@ -245,11 +268,12 @@ export async function getBooksByTag(
 ): Promise<BookItem[]> {
   const normalizedTag = tag.trim();
   if (!normalizedTag) return [];
-  if (!Number.isFinite(start) || start < 0) throw new Error('start 必须是非负整数');
-  if (!Number.isFinite(limit) || limit <= 0) return [];
+  if (!Number.isInteger(start) || start < 0) throw new Error('start 必须是非负整数');
+  if (!Number.isInteger(limit) || limit <= 0) return [];
 
   const results: BookItem[] = [];
-  let pageStart = Math.trunc(start);
+  let pageStart = start;
+  const seen = new Set<string>();
 
   while (results.length < limit) {
     const url = `${BOOK_BASE}/tag/${encodeURIComponent(normalizedTag)}?start=${pageStart}&type=${sort}`;
@@ -257,13 +281,29 @@ export async function getBooksByTag(
     if (isChallengePage(html)) throw new Error('图书标签页面触发了反爬挑战，暂时无法解析');
 
     const pageItems = parseBookSubjectList(html);
-    if (pageItems.length === 0) break;
-    results.push(...pageItems.map(toBookItem));
-    pageStart += pageItems.length;
-    if (pageItems.length < 20) break;
+    if (pageItems.length === 0) {
+      const explicitEmpty = /没有找到|暂无相关|subject-list[^>]*>\s*<\/ul>/i.test(html);
+      if (!explicitEmpty && pageStart === start) {
+        throw new ResponseSchemaError('图书标签页面未解析出预期条目', url);
+      }
+      break;
+    }
+    for (const item of pageItems) {
+      if (!item.id || seen.has(item.id)) continue;
+      seen.add(item.id);
+      results.push(toBookItem(item));
+      if (results.length >= limit) break;
+    }
+    const nextStart = parseNextStart(html, url);
+    if (nextStart === null) break;
+    if (nextStart <= pageStart) throw new ResponseSchemaError('图书标签分页游标没有前进', url);
+    if (pageItems.length < 20) {
+      throw new ResponseSchemaError('图书标签页声明存在下一页，但当前页解析不完整', url);
+    }
+    pageStart = nextStart;
   }
 
-  return uniqueById(results).slice(0, limit);
+  return results.slice(0, limit);
 }
 
 async function searchBookSuggestions(keyword: string, limit: number): Promise<BookSearchItem[]> {
@@ -279,7 +319,9 @@ async function searchBookSuggestions(keyword: string, limit: number): Promise<Bo
     Referer: `${BOOK_BASE}/`
   });
 
-  if (!Array.isArray(items)) return [];
+  if (!Array.isArray(items)) {
+    throw new ResponseSchemaError('图书建议接口返回格式异常', `${BOOK_BASE}/j/subject_suggest`);
+  }
   return items
     .filter((item) => !item.type || item.type === 'b')
     .map((item) => {
@@ -309,33 +351,57 @@ async function searchBookSuggestions(keyword: string, limit: number): Promise<Bo
 export async function searchBooks(keyword: string, start = 0, limit = 20): Promise<BookSearchItem[]> {
   const query = keyword.trim();
   if (!query) return [];
-  if (!Number.isFinite(start) || start < 0) throw new Error('start 必须是非负整数');
-  if (!Number.isFinite(limit) || limit <= 0) return [];
+  if (!Number.isInteger(start) || start < 0) throw new Error('start 必须是非负整数');
+  if (!Number.isInteger(limit) || limit <= 0) return [];
 
   const results: BookSearchItem[] = [];
-  let pageStart = Math.trunc(start);
+  const seen = new Set<string>();
+  let pageStart = start;
+  let firstPageError: unknown;
+  const maxPages = Math.min(50, Math.max(1, Math.ceil(limit / 15) + 3));
 
-  try {
-    while (results.length < limit) {
-      const url = `https://search.douban.com/book/subject_search?search_text=${encodeURIComponent(query)}&cat=1001&start=${pageStart}`;
+  for (let pageNumber = 0; pageNumber < maxPages && results.length < limit; pageNumber += 1) {
+    const url = `https://search.douban.com/book/subject_search?search_text=${encodeURIComponent(query)}&cat=1001&start=${pageStart}`;
+    try {
       const html = await fetchHtml(url, { Referer: 'https://www.douban.com/' });
       if (isChallengePage(html)) throw new Error('图书搜索页面触发了反爬挑战');
 
       const page = parseBookSearchPage(html);
-      results.push(...page.items.map((item) => ({ ...item })));
+      if (!Number.isInteger(page.count) || page.count < 0 || !Number.isInteger(page.total) || page.total < 0) {
+        throw new ResponseSchemaError('图书搜索分页元数据无效', url);
+      }
+      if (page.count > 0 && page.items.length === 0 && pageStart < page.total) {
+        throw new ResponseSchemaError('图书搜索页声明有结果但未解析出任何书籍', url);
+      }
+      for (const item of page.items) {
+        if (!item.id || seen.has(item.id)) continue;
+        seen.add(item.id);
+        results.push({ ...item });
+        if (results.length >= limit) break;
+      }
       if (page.count <= 0 || pageStart + page.count >= page.total) break;
-      pageStart += page.count;
+      const nextStart = pageStart + page.count;
+      if (nextStart <= pageStart) throw new ResponseSchemaError('图书搜索分页游标没有前进', url);
+      pageStart = nextStart;
+    } catch (error) {
+      if (results.length === 0) firstPageError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      debug('book', `${results.length > 0 ? '后续搜索页失败，保留已有结果' : '完整搜索失败，准备回退建议接口'}: ${message}`);
+      break;
     }
-
-    const unique = uniqueById(results);
-    if (unique.length > 0) return unique.slice(0, limit);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    debug('book', `完整搜索失败，回退建议接口: ${message}`);
   }
 
-  if (start > 0) return [];
-  return searchBookSuggestions(query, limit);
+  if (results.length > 0) return results.slice(0, limit);
+  if (start > 0) {
+    if (firstPageError) throw firstPageError;
+    return [];
+  }
+  try {
+    return await searchBookSuggestions(query, limit);
+  } catch (suggestionError) {
+    if (firstPageError) throw firstPageError;
+    throw suggestionError;
+  }
 }
 
 interface MobileBookResponse {
@@ -494,12 +560,12 @@ export async function getBookNotes(
 ): Promise<SubjectPaginatedResult<BookNoteItem>> {
   const id = bookId.trim();
   if (!/^\d+$/.test(id)) throw new Error('书籍 ID 必须是纯数字');
-  if (!Number.isFinite(start) || start < 0) throw new Error('start 必须是非负整数');
-  if (!Number.isFinite(limit) || limit <= 0) return { items: [], total: 0 };
+  if (!Number.isInteger(start) || start < 0) throw new Error('start 必须是非负整数');
+  if (!Number.isInteger(limit) || limit <= 0) return { items: [], total: 0 };
 
-  const data = await fetchJson<{
+  interface AnnotationResponse {
     total?: number;
-    annotations?: Array<{
+    annotations: Array<{
       id?: string;
       chapter?: string;
       title?: string;
@@ -509,23 +575,31 @@ export async function getBookNotes(
       user?: { name?: string };
       url?: string;
     }>;
-  }>(`https://m.douban.com/rexxar/api/v2/book/${id}/annotations?count=${limit}&start=${start}`, {
+  }
+
+  const url = `https://m.douban.com/rexxar/api/v2/book/${id}/annotations?count=${limit}&start=${start}`;
+  const rawData = await fetchJson<unknown>(url, {
     Referer: `https://m.douban.com/book/subject/${id}/`
   });
+  if (!rawData || typeof rawData !== 'object' || Array.isArray(rawData)
+    || !Array.isArray((rawData as Record<string, unknown>).annotations)) {
+    throw new ResponseSchemaError('读书笔记接口返回格式异常', url);
+  }
+  const data = rawData as AnnotationResponse;
 
-  const items = Array.isArray(data.annotations)
-    ? data.annotations.map((item) => ({
-      id: item.id || '',
-      user: cleanText(item.author?.name || item.user?.name || '') || '匿名',
-      chapter: cleanText(item.chapter || item.title || '') || '-',
-      content: cleanText(item.abstract || ''),
-      time: cleanText(item.create_time || ''),
-      url: item.url || `${BOOK_BASE}/annotation/${item.id || ''}/`
-    }))
-    : [];
+  const items = data.annotations.filter((item) => !!item.id).map((item) => ({
+    id: item.id || '',
+    user: cleanText(item.author?.name || item.user?.name || '') || '匿名',
+    chapter: cleanText(item.chapter || item.title || '') || '-',
+    content: cleanText(item.abstract || ''),
+    time: cleanText(item.create_time || ''),
+    url: item.url || `${BOOK_BASE}/annotation/${item.id || ''}/`
+  }));
 
   return {
     items,
-    total: typeof data.total === 'number' && data.total >= 0 ? data.total : items.length
+    total: typeof data.total === 'number' && Number.isFinite(data.total) && data.total >= 0
+      ? Math.trunc(data.total)
+      : items.length
   };
 }

@@ -1,4 +1,5 @@
-import { cleanText, fetchJson } from './common.js';
+import { cleanText, fetchJson, ResponseSchemaError } from './common.js';
+import { debug } from '../utils/debug.js';
 
 export type SubjectKind = 'movie' | 'book';
 
@@ -38,6 +39,10 @@ export interface SubjectRatingStats {
   type_ranks: Array<{ type: string; rank: number }>;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function normalizeSubjectId(value: string, kind: SubjectKind): string {
   const id = value.trim();
   if (!/^\d+$/.test(id)) {
@@ -60,12 +65,12 @@ export async function getSubjectReviews(
   limit = 20
 ): Promise<SubjectPaginatedResult<SubjectReviewItem>> {
   const id = normalizeSubjectId(subjectId, kind);
-  if (!Number.isFinite(start) || start < 0) throw new Error('start 必须是非负整数');
-  if (!Number.isFinite(limit) || limit <= 0) return { items: [], total: 0 };
+  if (!Number.isInteger(start) || start < 0) throw new Error('start 必须是非负整数');
+  if (!Number.isInteger(limit) || limit <= 0) return { items: [], total: 0 };
 
   interface ReviewResponse {
     total?: number;
-    reviews?: Array<{
+    reviews: Array<{
       id?: string;
       title?: string;
       abstract?: string;
@@ -77,22 +82,29 @@ export async function getSubjectReviews(
     }>;
   }
 
-  const data = await fetchJson<ReviewResponse>(
-    `https://m.douban.com/rexxar/api/v2/${kind}/${id}/reviews?count=${limit}&start=${start}`,
+  const url = `https://m.douban.com/rexxar/api/v2/${kind}/${id}/reviews?count=${limit}&start=${start}`;
+  const rawData = await fetchJson<unknown>(
+    url,
     { Referer: mobileReferer(kind, id) }
   );
+  if (!isRecord(rawData) || !Array.isArray(rawData.reviews)) {
+    throw new ResponseSchemaError('评论接口返回格式异常', url);
+  }
+  const data = rawData as unknown as ReviewResponse;
 
-  const items = Array.isArray(data.reviews)
-    ? data.reviews.map((item) => ({
-      id: item.id || '',
-      user: cleanText(item.user?.name || '') || '匿名',
-      rating: typeof item.rating?.value === 'number' ? String(item.rating.value) : '-',
-      votes: typeof item.useful_count === 'number' ? item.useful_count : 0,
-      time: cleanText(item.create_time || ''),
-      content: `【${cleanText(item.title || '') || '无标题'}】${cleanText(item.abstract || '')}`,
-      url: item.url || `https://${kind}.douban.com/review/${item.id}/`
-    }))
-    : [];
+  const items = data.reviews.filter((item) => !!item.id).map((item) => ({
+    id: item.id || '',
+    user: cleanText(item.user?.name || '') || '匿名',
+    rating: typeof item.rating?.value === 'number' && Number.isFinite(item.rating.value)
+      ? String(item.rating.value)
+      : '-',
+    votes: typeof item.useful_count === 'number' && Number.isFinite(item.useful_count)
+      ? Math.max(0, Math.trunc(item.useful_count))
+      : 0,
+    time: cleanText(item.create_time || ''),
+    content: `【${cleanText(item.title || '') || '无标题'}】${cleanText(item.abstract || '')}`,
+    url: item.url || `https://${kind}.douban.com/review/${item.id}/`
+  }));
 
   const total = typeof data.total === 'number' && Number.isFinite(data.total) && data.total >= 0
     ? data.total
@@ -112,8 +124,8 @@ export async function getSubjectComments(
   count = 20
 ): Promise<SubjectPaginatedResult<SubjectCommentItem>> {
   const id = normalizeSubjectId(subjectId, kind);
-  if (!Number.isFinite(start) || start < 0) throw new Error('start 必须是非负整数');
-  if (!Number.isFinite(count) || count <= 0) return { items: [], total: 0 };
+  if (!Number.isInteger(start) || start < 0) throw new Error('start 必须是非负整数');
+  if (!Number.isInteger(count) || count <= 0) return { items: [], total: 0 };
 
   interface Interest {
     id?: string;
@@ -127,25 +139,33 @@ export async function getSubjectComments(
     };
   }
 
-  const data = await fetchJson<{ total?: number; interests?: Interest[] }>(
-    `https://m.douban.com/rexxar/api/v2/${kind}/${id}/interests?count=${count}&start=${start}&order_by=${orderBy}`,
+  const url = `https://m.douban.com/rexxar/api/v2/${kind}/${id}/interests?count=${count}&start=${start}&order_by=${orderBy}`;
+  const rawData = await fetchJson<unknown>(
+    url,
     { Referer: mobileReferer(kind, id) }
   );
+  if (!isRecord(rawData) || !Array.isArray(rawData.interests)) {
+    throw new ResponseSchemaError('短评接口返回格式异常', url);
+  }
+  const data = rawData as { total?: number; interests: Interest[] };
 
-  const items = Array.isArray(data.interests)
-    ? data.interests
-      .filter((item) => cleanText(item.comment || '').length > 0)
-      .map((item) => ({
-        id: item.id || '',
-        user: cleanText(item.user?.name || '') || '匿名',
-        avatar: item.user?.avatar || '',
-        rating: typeof item.rating?.value === 'number' ? item.rating.value : 0,
-        votes: typeof item.vote_count === 'number' ? item.vote_count : 0,
-        time: cleanText(item.create_time || ''),
-        content: cleanText(item.comment || ''),
-        url: `https://www.douban.com/doubanapp/dispatch?uri=/${kind}/${id}/interest/${item.id || ''}`
-      }))
-    : [];
+  const items = data.interests
+    .filter((item) => cleanText(item.comment || '').length > 0)
+    .filter((item) => !!item.id)
+    .map((item) => ({
+      id: item.id || '',
+      user: cleanText(item.user?.name || '') || '匿名',
+      avatar: item.user?.avatar || '',
+      rating: typeof item.rating?.value === 'number' && Number.isFinite(item.rating.value)
+        ? item.rating.value
+        : 0,
+      votes: typeof item.vote_count === 'number' && Number.isFinite(item.vote_count)
+        ? Math.max(0, Math.trunc(item.vote_count))
+        : 0,
+      time: cleanText(item.create_time || ''),
+      content: cleanText(item.comment || ''),
+      url: `https://www.douban.com/doubanapp/dispatch?uri=/${kind}/${id}/interest/${item.id || ''}`
+    }));
 
   const total = typeof data.total === 'number' && Number.isFinite(data.total) && data.total >= 0
     ? data.total
@@ -164,7 +184,7 @@ export async function getSubjectRatingStats(
   const id = normalizeSubjectId(subjectId, kind);
 
   interface RatingResponse {
-    stats?: number[];
+    stats: number[];
     wish_count?: number;
     done_count?: number;
     doing_count?: number;
@@ -175,17 +195,36 @@ export async function getSubjectRatingStats(
     rating?: { value?: number; count?: number };
   }
 
-  const [ratingData, subjectData] = await Promise.all([
-    fetchJson<RatingResponse>(
-      `https://m.douban.com/rexxar/api/v2/${kind}/${id}/rating?for_mobile=1`,
-      { Referer: mobileReferer(kind, id) }
-    ),
-    fetchJson<SubjectResponse>(
-      `https://m.douban.com/rexxar/api/v2/${kind}/${id}?for_mobile=1`,
-      { Referer: mobileReferer(kind, id) }
-    )
+  const ratingUrl = `https://m.douban.com/rexxar/api/v2/${kind}/${id}/rating?for_mobile=1`;
+  const subjectUrl = `https://m.douban.com/rexxar/api/v2/${kind}/${id}?for_mobile=1`;
+  const [ratingResult, subjectResult] = await Promise.allSettled([
+    fetchJson<unknown>(ratingUrl, { Referer: mobileReferer(kind, id) }).then((data) => {
+      if (!isRecord(data) || !Array.isArray(data.stats)) {
+        throw new ResponseSchemaError('评分分布接口返回格式异常', ratingUrl);
+      }
+      return data as unknown as RatingResponse;
+    }),
+    fetchJson<unknown>(subjectUrl, { Referer: mobileReferer(kind, id) }).then((data) => {
+      if (!isRecord(data)) throw new ResponseSchemaError('详情评分接口返回格式异常', subjectUrl);
+      return data as SubjectResponse;
+    })
   ]);
 
+  if (ratingResult.status === 'rejected' && subjectResult.status === 'rejected') {
+    throw new AggregateError(
+      [ratingResult.reason, subjectResult.reason],
+      `获取${kind === 'book' ? '书籍' : '电影'}评分统计失败`
+    );
+  }
+  if (ratingResult.status === 'rejected') {
+    debug('subject', `评分分布接口失败，保留详情评分: ${ratingResult.reason instanceof Error ? ratingResult.reason.message : String(ratingResult.reason)}`);
+  }
+  if (subjectResult.status === 'rejected') {
+    debug('subject', `详情评分接口失败，保留评分分布: ${subjectResult.reason instanceof Error ? subjectResult.reason.message : String(subjectResult.reason)}`);
+  }
+
+  const ratingData: Partial<RatingResponse> = ratingResult.status === 'fulfilled' ? ratingResult.value : {};
+  const subjectData: SubjectResponse = subjectResult.status === 'fulfilled' ? subjectResult.value : {};
   const rawStats = Array.isArray(ratingData.stats) ? ratingData.stats : [];
   const stars = new Array<number>(5).fill(0).map((_, index) => {
     const value = rawStats[index];
@@ -195,12 +234,29 @@ export async function getSubjectRatingStats(
   });
 
   return {
-    value: typeof subjectData.rating?.value === 'number' ? subjectData.rating.value : 0,
-    count: typeof subjectData.rating?.count === 'number' ? subjectData.rating.count : 0,
+    value: typeof subjectData.rating?.value === 'number' && Number.isFinite(subjectData.rating.value)
+      ? subjectData.rating.value
+      : 0,
+    count: typeof subjectData.rating?.count === 'number' && Number.isFinite(subjectData.rating.count)
+      ? Math.max(0, Math.trunc(subjectData.rating.count))
+      : 0,
     stars,
-    wish_count: typeof ratingData.wish_count === 'number' ? ratingData.wish_count : 0,
-    done_count: typeof ratingData.done_count === 'number' ? ratingData.done_count : 0,
-    doing_count: typeof ratingData.doing_count === 'number' ? ratingData.doing_count : 0,
-    type_ranks: Array.isArray(ratingData.type_ranks) ? ratingData.type_ranks : []
+    wish_count: typeof ratingData.wish_count === 'number' && Number.isFinite(ratingData.wish_count)
+      ? Math.max(0, Math.trunc(ratingData.wish_count))
+      : 0,
+    done_count: typeof ratingData.done_count === 'number' && Number.isFinite(ratingData.done_count)
+      ? Math.max(0, Math.trunc(ratingData.done_count))
+      : 0,
+    doing_count: typeof ratingData.doing_count === 'number' && Number.isFinite(ratingData.doing_count)
+      ? Math.max(0, Math.trunc(ratingData.doing_count))
+      : 0,
+    type_ranks: Array.isArray(ratingData.type_ranks)
+      ? ratingData.type_ranks.filter((item) => (
+        !!item
+        && typeof item.type === 'string'
+        && typeof item.rank === 'number'
+        && Number.isFinite(item.rank)
+      ))
+      : []
   };
 }

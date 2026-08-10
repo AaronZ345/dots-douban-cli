@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getBookInfo, searchBooks } from '../api/book.ts';
+import { getBookInfo, getBookNotes, searchBooks } from '../api/book.ts';
 import { parseBookDetailHtml, parseBookMediaList, parseBookSearchPage } from '../api/book-parsers.ts';
 
 afterEach(() => {
@@ -89,6 +89,12 @@ describe('book parsers', () => {
 });
 
 describe('book API orchestration', () => {
+  it('rejects malformed annotation responses instead of returning an empty list', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({})));
+
+    await expect(getBookNotes('2567698')).rejects.toMatchObject({ code: 'SCHEMA_MISMATCH' });
+  });
+
   it('aggregates multiple 15-item search pages to satisfy limit', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);

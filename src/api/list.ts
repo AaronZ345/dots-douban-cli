@@ -1,4 +1,4 @@
-import { cleanText, extractNumericId, fetchHtml, isChallengePage } from './common.js';
+import { cleanText, extractNumericId, fetchHtml, isChallengePage, ResponseSchemaError } from './common.js';
 
 export interface DoulistItem {
   id: string;
@@ -13,7 +13,7 @@ export interface DoulistItem {
  * Get hot doulist recommendations from https://www.douban.com/doulist/
  */
 export async function getHotLists(limit = 20): Promise<DoulistItem[]> {
-  if (!Number.isFinite(limit) || limit <= 0) return [];
+  if (!Number.isInteger(limit) || limit <= 0) return [];
 
   const html = await fetchHtml('https://www.douban.com/doulist/', {
     Referer: 'https://www.douban.com/'
@@ -24,13 +24,13 @@ export async function getHotLists(limit = 20): Promise<DoulistItem[]> {
   }
 
   const results: DoulistItem[] = [];
-  const itemRegex = /<li class="doulist-item"[\s\S]*?<\/li>/g;
+  const itemRegex = /<li[^>]*class=["'][^"']*\bdoulist-item\b[^"']*["'][^>]*>[\s\S]*?<\/li>/gi;
 
   let match;
   while ((match = itemRegex.exec(html)) !== null && results.length < limit) {
     const block = match[0];
 
-    const linkMatch = block.match(/<div class="title"><a href="(https:\/\/www\.douban\.com\/doulist\/(\d+)\/[^"]*)"[^>]*>([\s\S]*?)<\/a><\/div>/);
+    const linkMatch = block.match(/<div[^>]*class=["'][^"']*\btitle\b[^"']*["'][^>]*>\s*<a[^>]*href=["'](https:\/\/www\.douban\.com\/doulist\/(\d+)\/[^"']*)["'][^>]*>([\s\S]*?)<\/a>\s*<\/div>/i);
     if (!linkMatch) continue;
 
     const metaMatch = block.match(/<p class="meta">([\s\S]*?)<\/p>/);
@@ -48,6 +48,10 @@ export async function getHotLists(limit = 20): Promise<DoulistItem[]> {
       recent: recentMatch ? cleanText(recentMatch[1]) : '-',
       url: linkMatch[1]
     });
+  }
+
+  if (results.length === 0) {
+    throw new ResponseSchemaError('热门豆列页面未解析出预期条目', 'https://www.douban.com/doulist/');
   }
 
   return results;
