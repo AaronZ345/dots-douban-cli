@@ -47,6 +47,41 @@ assert.doesNotMatch(rootHelp.stdout, /book tag/);
 assert.doesNotMatch(rootHelp.stdout, /\bfeed\b/);
 assert.equal(rootHelp.stderr, '');
 
+const loginHelp = run('login', '--help');
+assert.equal(loginHelp.status, 0);
+assert.match(loginHelp.stdout, /--cookie-stdin/);
+assert.match(loginHelp.stdout, /--cookie-file <path>/);
+assert.doesNotMatch(loginHelp.stdout, /--cookie\s+</);
+assert.equal(loginHelp.stderr, '');
+
+const nonInteractiveBrowserLogin = run('login', '--open', '--json');
+assert.equal(nonInteractiveBrowserLogin.status, 1);
+assert.equal(nonInteractiveBrowserLogin.stdout, '');
+const nonInteractiveBrowserLoginPayload = JSON.parse(nonInteractiveBrowserLogin.stderr);
+assert.equal(nonInteractiveBrowserLoginPayload.error.code, 'AUTH_REQUIRED');
+assert.match(nonInteractiveBrowserLoginPayload.error.message, /需要交互式终端/);
+
+for (const args of [
+  ['--cookie-stdin', '--json'],
+  ['--cookie-stdin', '--browser', 'chrome', '--json']
+]) {
+  const invalidManualLogin = run('login', ...args);
+  assert.equal(invalidManualLogin.status, 1);
+  assert.equal(invalidManualLogin.stdout, '');
+  assert.equal(JSON.parse(invalidManualLogin.stderr).error.code, 'INVALID_ARGUMENT');
+}
+
+const fakeCookieHeader = 'bid=SMOKE_TRACKING; dbcl2=SMOKE_ACCOUNT; ck=SMOKE_CSRF';
+for (const args of [
+  [`--cookie=${fakeCookieHeader}`, '--json'],
+  ['--cookie-stdin', fakeCookieHeader, '--json']
+]) {
+  const rejectedCookieArgument = run('login', ...args);
+  assert.equal(rejectedCookieArgument.status, 1);
+  assert.equal(rejectedCookieArgument.stdout, '');
+  assert.doesNotMatch(rejectedCookieArgument.stderr, /SMOKE_TRACKING|SMOKE_ACCOUNT|SMOKE_CSRF/);
+}
+
 for (const removedCommand of [
   ['feed', '--json'],
   ['book', 'tag', '小说', '--json']

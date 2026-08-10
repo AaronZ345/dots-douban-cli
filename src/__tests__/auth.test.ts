@@ -6,17 +6,20 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let tempHome = '';
 let originalHome: string | undefined;
 let originalCliHome: string | undefined;
+let originalExitCode: string | number | null | undefined;
 const originalStdinIsTty = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
 
 function authCachePath(): string {
@@ -30,6 +33,8 @@ function legacyAuthCachePath(): string {
 beforeEach(() => {
   originalHome = process.env.HOME;
   originalCliHome = process.env.DOUBAN_CLI_HOME;
+  originalExitCode = process.exitCode;
+  process.exitCode = undefined;
   tempHome = mkdtempSync(path.join(os.tmpdir(), 'douban-auth-'));
   process.env.HOME = tempHome;
   process.env.DOUBAN_CLI_HOME = path.join(tempHome, 'storage');
@@ -41,6 +46,7 @@ afterEach(() => {
   else process.env.HOME = originalHome;
   if (originalCliHome === undefined) delete process.env.DOUBAN_CLI_HOME;
   else process.env.DOUBAN_CLI_HOME = originalCliHome;
+  process.exitCode = originalExitCode;
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -57,6 +63,26 @@ function profileHtml(id: string, name: string): string {
   return `<title>${name}</title><a class="lnk-mine" href="https://www.douban.com/people/${id}/">${name}</a>`;
 }
 
+function cookieStdin(contents: string, isTTY = false): Readable & { isTTY?: boolean } {
+  const stream = Readable.from([contents]) as Readable & { isTTY?: boolean };
+  stream.isTTY = isTTY;
+  return stream;
+}
+
+function netscapeCookieLine(name: string, value: string, options: {
+  domain?: string;
+  cookiePath?: string;
+  expires?: number;
+  httpOnly?: boolean;
+  includeSubdomains?: boolean;
+} = {}): string {
+  const domain = options.domain ?? '.douban.com';
+  const prefix = options.httpOnly ? '#HttpOnly_' : '';
+  const expires = options.expires ?? Math.floor(Date.now() / 1000) + 3600;
+  const includeSubdomains = options.includeSubdomains === false ? 'FALSE' : 'TRUE';
+  return `${prefix}${domain}\t${includeSubdomains}\t${options.cookiePath ?? '/'}\tTRUE\t${expires}\t${name}\t${value}`;
+}
+
 describe.sequential('authentication safety', () => {
   it('ensureAuth uses only the local cache and never scans browsers implicitly', async () => {
     const fetchMock = vi.fn();
@@ -65,6 +91,171 @@ describe.sequential('authentication safety', () => {
 
     await expect(auth.ensureAuth()).rejects.toThrow('请先运行 douban login');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('parses a copied Cookie request header while discarding unrelated cookies', async () => {
+    const auth = await import('../auth.ts');
+
+    expect(auth.parseCookieHeader(
+      'Cookie: bid=unused; ck=manual-csrf; dbcl2="manual-account"; ll="108288"'
+    )).toEqual({ dbcl2: 'manual-account', ck: 'manual-csrf' });
+    expect(auth.parseCookieHeader('dbcl2=manual-account')).toEqual({ dbcl2: 'manual-account' });
+    expect(auth.parseCookieHeader('dbcl2=manual-account; ck=manual-csrf\r\n'))
+      .toEqual({ dbcl2: 'manual-account', ck: 'manual-csrf' });
+  });
+
+  it.each([
+    ['missing dbcl2', 'bid=unused; ck=manual-csrf'],
+    ['duplicate dbcl2', 'dbcl2=first; dbcl2=second'],
+    ['duplicate ck', 'dbcl2=manual-account; ck=first; ck=second'],
+    ['unbalanced quotes', 'dbcl2="manual-account'],
+    ['header injection', 'dbcl2=manual-account\r\nX-Test: injected'],
+    ['multiple trailing lines', 'dbcl2=manual-account\n\n'],
+    ['malformed segment', 'dbcl2=manual-account; invalid-segment'],
+    ['oversized input', `dbcl2=${'x'.repeat(16 * 1024)}`]
+  ])('rejects unsafe manual Cookie headers: %s', async (_label, header) => {
+    const auth = await import('../auth.ts');
+
+    expect(auth.parseCookieHeader(header)).toBeNull();
+  });
+
+  it('parses active Douban cookies from Netscape cookies.txt', async () => {
+    const auth = await import('../auth.ts');
+    const contents = [
+      '# Netscape HTTP Cookie File',
+      netscapeCookieLine('dbcl2', 'wrong-domain', { domain: '.example.com' }),
+      netscapeCookieLine('dbcl2', '"manual-account"', { httpOnly: true }),
+      netscapeCookieLine('ck', 'manual-csrf')
+    ].join('\n');
+
+    expect(auth.parseNetscapeCookies(contents)).toEqual({
+      dbcl2: 'manual-account',
+      ck: 'manual-csrf'
+    });
+    expect(auth.parseNetscapeCookies(
+      netscapeCookieLine('dbcl2', 'www-account', {
+        domain: 'www.douban.com',
+        includeSubdomains: false
+      })
+    )).toEqual({ dbcl2: 'www-account' });
+  });
+
+  it.each([
+    ['expired dbcl2', netscapeCookieLine('dbcl2', 'expired', { expires: 1 })],
+    ['wrong domain', netscapeCookieLine('dbcl2', 'wrong-domain', { domain: '.example.com' })],
+    ['unrelated Douban subdomain', netscapeCookieLine('dbcl2', 'wrong-scope', { domain: 'accounts.douban.com' })],
+    ['root host-only cookie', netscapeCookieLine('dbcl2', 'wrong-scope', {
+      domain: 'douban.com',
+      includeSubdomains: false
+    })],
+    ['empty leading label', netscapeCookieLine('dbcl2', 'bad-domain', { domain: '..douban.com' })],
+    ['double-dot domain', netscapeCookieLine('dbcl2', 'bad-domain', { domain: 'a..douban.com' })],
+    ['control-character domain', netscapeCookieLine('dbcl2', 'bad-domain', { domain: '\0.douban.com' })],
+    ['wrong path', netscapeCookieLine('dbcl2', 'wrong-path', { cookiePath: '/accounts' })],
+    ['duplicate dbcl2', [
+      netscapeCookieLine('dbcl2', 'first'),
+      netscapeCookieLine('dbcl2', 'second')
+    ].join('\n')]
+  ])('rejects invalid Netscape auth cookies: %s', async (_label, contents) => {
+    const auth = await import('../auth.ts');
+
+    expect(auth.parseNetscapeCookies(contents)).toBeNull();
+  });
+
+  it('imports a Cookie header only from explicit non-TTY stdin and stores it privately', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(profileHtml('alice', 'Alice'), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const auth = await import('../auth.ts');
+
+    const session = await auth.loginFromCookieStdin(cookieStdin(
+      'Cookie: dbcl2="manual-account"; ck=manual-csrf; bid=discarded\n'
+    ));
+
+    expect(session).toMatchObject({
+      source: 'Manual stdin',
+      accountId: 'alice',
+      accountName: 'Alice'
+    });
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Cookie'))
+      .toBe('dbcl2=manual-account; ck=manual-csrf');
+    const cacheText = readFileSync(authCachePath(), 'utf8');
+    expect(cacheText).not.toContain('manual-account');
+    expect(cacheText).not.toContain('manual-csrf');
+  });
+
+  it('rejects TTY, empty, oversized, and injected stdin before verification', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const auth = await import('../auth.ts');
+
+    await expect(auth.loginFromCookieStdin(cookieStdin('dbcl2=manual-account', true)))
+      .rejects.toThrow('只接受管道或重定向输入');
+    await expect(auth.loginFromCookieStdin(cookieStdin('')))
+      .rejects.toThrow('标准输入为空');
+    await expect(auth.loginFromCookieStdin(cookieStdin(`dbcl2=${'x'.repeat(16 * 1024)}`)))
+      .rejects.toThrow('不能超过 16 KiB');
+    await expect(auth.loginFromCookieStdin(cookieStdin('dbcl2=manual-account\nX-Test: injected')))
+      .rejects.toThrow('标准输入无效');
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(existsSync(authCachePath())).toBe(false);
+  });
+
+  it('imports only a regular Netscape cookies.txt file', async () => {
+    const cookieFile = path.join(tempHome, 'douban-cookies.txt');
+    writeFileSync(cookieFile, [
+      '# Netscape HTTP Cookie File',
+      netscapeCookieLine('dbcl2', '"file-account"', { httpOnly: true }),
+      netscapeCookieLine('ck', 'file-csrf')
+    ].join('\n'));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(profileHtml('alice', 'Alice'), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const auth = await import('../auth.ts');
+
+    const session = await auth.loginFromCookieFile(cookieFile);
+
+    expect(session).toMatchObject({ source: 'Manual file', accountId: 'alice' });
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Cookie'))
+      .toBe('dbcl2=file-account; ck=file-csrf');
+    const cacheText = readFileSync(authCachePath(), 'utf8');
+    expect(cacheText).not.toContain('file-account');
+    expect(cacheText).not.toContain('file-csrf');
+  });
+
+  it('rejects non-regular and oversized Cookie files before verification', async () => {
+    const cookieFile = path.join(tempHome, 'douban-cookies.txt');
+    const linkedCookieFile = path.join(tempHome, 'linked-cookies.txt');
+    const oversizedCookieFile = path.join(tempHome, 'oversized-cookies.txt');
+    writeFileSync(cookieFile, netscapeCookieLine('dbcl2', 'file-account'));
+    symlinkSync(cookieFile, linkedCookieFile);
+    writeFileSync(oversizedCookieFile, 'x'.repeat(128 * 1024 + 1));
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const auth = await import('../auth.ts');
+
+    await expect(auth.loginFromCookieFile(tempHome))
+      .rejects.toThrow('必须是普通文件');
+    await expect(auth.loginFromCookieFile(linkedCookieFile))
+      .rejects.toThrow('不能是符号链接');
+    await expect(auth.loginFromCookieFile(oversizedCookieFile))
+      .rejects.toThrow('不能超过 128 KiB');
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(existsSync(authCachePath())).toBe(false);
+  });
+
+  it('does not cache or print a manually supplied Cookie when account verification fails', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('unauthorized', { status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const auth = await import('../auth.ts');
+
+    await expect(auth.loginFromCookieStdin(cookieStdin(
+      'dbcl2=must-not-leak; ck=must-also-not-leak'
+    ))).rejects.toMatchObject({ code: 'HTTP_STATUS', status: 401 });
+
+    expect(existsSync(authCachePath())).toBe(false);
+    expect(stderr).not.toHaveBeenCalled();
   });
 
   it('reads only auth cookies from one explicit browser profile and stores account identity privately', async () => {
@@ -155,6 +346,27 @@ describe.sequential('authentication safety', () => {
     expect(question.mock.calls[1]?.[0]).toContain('以验证到的豆瓣账号为准');
   });
 
+  it('does not inspect or open a browser for non-interactive browser login', async () => {
+    const spawnSyncMock = vi.fn();
+    const question = vi.fn();
+    const close = vi.fn();
+    const getCookies = vi.fn();
+    vi.doMock('node:child_process', () => ({ spawnSync: spawnSyncMock }));
+    vi.doMock('node:readline/promises', () => ({
+      default: { createInterface: () => ({ question, close }) }
+    }));
+    vi.doMock('@steipete/sweet-cookie', () => ({ getCookies }));
+    Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+    const auth = await import('../auth.ts');
+
+    await expect(auth.loginWithBrowser({ open: true }))
+      .rejects.toThrow('douban login 需要交互式终端');
+
+    expect(spawnSyncMock).not.toHaveBeenCalled();
+    expect(question).not.toHaveBeenCalled();
+    expect(getCookies).not.toHaveBeenCalled();
+  });
+
   it('rejects browser opening with an explicit profile before any side effects', async () => {
     const spawnSyncMock = vi.fn().mockReturnValue({ status: 0 });
     const question = vi.fn().mockResolvedValue('');
@@ -178,17 +390,58 @@ describe.sequential('authentication safety', () => {
     expect(getCookies).not.toHaveBeenCalled();
   });
 
-  it('advertises browser opening as an opt-in login flag', async () => {
+  it('advertises browser and explicit manual login modes without a raw Cookie argument', async () => {
     const { registerAuthCommands } = await import('../commands/auth.ts');
     const program = new Command();
     registerAuthCommands(program);
 
     const login = program.commands.find((command) => command.name() === 'login');
+    const optionNames = login?.options.map((option) => option.long) ?? [];
 
-    expect(login?.options.map((option) => option.long)).toContain('--open');
+    expect(optionNames).toEqual(expect.arrayContaining([
+      '--open',
+      '--cookie-stdin',
+      '--cookie-file'
+    ]));
+    expect(optionNames).not.toContain('--cookie');
     expect(login?.options.find((option) => option.long === '--open')?.description)
       .toContain('不能与 --profile 同用');
-    expect(login?.description()).toBe('从本机浏览器读取豆瓣登录态');
+    expect(login?.description()).toBe('从浏览器读取，或显式导入豆瓣登录态');
+  });
+
+  it('omits all Cookie material from manual login JSON output', async () => {
+    const cookieFile = path.join(tempHome, 'douban-cookies.txt');
+    writeFileSync(cookieFile, [
+      netscapeCookieLine('dbcl2', 'json-account'),
+      netscapeCookieLine('ck', 'json-csrf')
+    ].join('\n'));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(profileHtml('alice', 'Alice'), { status: 200 })
+    ));
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const { registerAuthCommands } = await import('../commands/auth.ts');
+    const program = new Command();
+    registerAuthCommands(program);
+
+    await program.parseAsync([
+      'node',
+      'douban',
+      'login',
+      '--cookie-file',
+      cookieFile,
+      '--json'
+    ]);
+
+    const output = String(stdout.mock.calls[0]?.[0]);
+    expect(JSON.parse(output)).toMatchObject({
+      source: 'Manual file',
+      accountId: 'alice',
+      accountName: 'Alice'
+    });
+    expect(output).not.toContain('json-account');
+    expect(output).not.toContain('json-csrf');
+    expect(output).not.toContain('dbcl2');
+    expect(output).not.toContain('cookies');
   });
 
   it('opens the current-account page in the selected browser', async () => {
@@ -328,7 +581,7 @@ describe.sequential('authentication safety', () => {
     const auth = await import('../auth.ts');
 
     await expect(auth.loginFromBrowserCookies({ browser: 'chrome' }, reader))
-      .rejects.toThrow('未找到可验证的豆瓣登录态');
+      .rejects.toMatchObject({ code: 'HTTP_STATUS', status: 401 });
     expect(fetchMock).toHaveBeenCalledOnce();
     for (const call of fetchMock.mock.calls) {
       expect(new Headers(call[1]?.headers).get('Cookie')).toBe('dbcl2=default-account');

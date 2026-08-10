@@ -188,7 +188,24 @@ douban login --browser chrome --profile "Profile 2"
 douban login --browser chrome --cookie-timeout 120
 ```
 
-未传 `--browser` 时，CLI 会识别系统 HTTPS 默认浏览器，只从同一个来源读取 Cookie，避免扫描多个浏览器和重复触发钥匙串授权。只有显式传入 `--open` 才会启动该浏览器并打开豆瓣当前账号页；这个窗口只是登录入口，最终保存哪个账号以 Cookie 验证结果为准。`--open` 不能与 `--profile` 同用：需要指定 profile 时，请先手动打开该 profile，再运行不带 `--open` 的登录命令。`--browser` 支持 Chrome、Edge、Firefox、Safari 和 Arc，其中 Safari 与 Arc 仅支持 macOS。`--profile` 必须与 `--browser` 一起使用，Safari 不支持指定 profile。浏览器 Cookie 和系统钥匙串默认等待 60 秒，可用 `--cookie-timeout` 调整为 1-300 秒。`login` 需要交互式终端，不能通过管道或 CI 输入启动。macOS 首次读取 Chromium 浏览器登录态时可能弹出 Safe Storage 授权，请选择允许。登录缓存会加密保存在本地，账号写操作前会重新核对身份。
+未传 `--browser` 时，CLI 会识别系统 HTTPS 默认浏览器，只从同一个来源读取 Cookie，避免扫描多个浏览器和重复触发钥匙串授权。只有显式传入 `--open` 才会启动该浏览器并打开豆瓣当前账号页；这个窗口只是登录入口，最终保存哪个账号以 Cookie 验证结果为准。`--open` 不能与 `--profile` 同用：需要指定 profile 时，请先手动打开该 profile，再运行不带 `--open` 的登录命令。`--browser` 支持 Chrome、Edge、Firefox、Safari 和 Arc，其中 Safari 与 Arc 仅支持 macOS。`--profile` 必须与 `--browser` 一起使用，Safari 不支持指定 profile。浏览器 Cookie 和系统钥匙串默认等待 60 秒，可用 `--cookie-timeout` 调整为 1-300 秒。浏览器模式需要交互式终端，不能通过管道或 CI 启动。macOS 首次读取 Chromium 浏览器登录态时可能弹出 Safe Storage 授权，请选择允许。
+
+浏览器提取不可用时，可以显式选择一种手动导入方式：
+
+```bash
+# macOS：先在浏览器开发者工具中复制单行 Cookie 请求头
+pbpaste | douban login --cookie-stdin
+
+# Windows PowerShell
+Get-Clipboard | douban login --cookie-stdin
+
+# 浏览器扩展导出的 Netscape cookies.txt
+douban login --cookie-file /path/to/douban-cookies.txt
+```
+
+`--cookie-stdin` 只接受非交互式标准输入中的单行 Cookie 请求头，可带 `Cookie:` 前缀和一个末尾换行；`--cookie-file` 只接受普通的 Netscape `cookies.txt` 文件。两者互斥，也不能与浏览器登录参数混用。CLI 只保留 `dbcl2` / `ck`，验证对应豆瓣账号后才写入加密缓存；即使浏览器提取失败，也不会自动读取标准输入、文件、剪贴板或环境变量。不要把 Cookie 放进命令行参数、环境变量、聊天、Issue 或日志；导入文件本身也是登录凭据，使用后应妥善删除或限制访问。`login --json` 只输出来源和账号信息，不输出或遮罩展示任何 Cookie。
+
+登录缓存会加密保存在本地，账号写操作前会重新核对身份。
 
 ### 电影标记、评分与评论
 
@@ -279,7 +296,8 @@ douban whoami --json
 
 ## 🛡️ 登录与隐私
 
-- 公开只读命令不会隐式读取浏览器 Cookie；只有显式运行 `douban login` 才会访问本机浏览器登录态。
+- 公开只读命令不会隐式读取浏览器 Cookie。浏览器登录只在显式运行 `douban login` 时发生；手动导入只在显式传入 `--cookie-stdin` 或 `--cookie-file` 时发生，浏览器失败不会自动切换来源。
+- CLI 不接受包含 Cookie 内容的命令行参数或环境变量，也不会自行读取剪贴板。Netscape `cookies.txt` 属于敏感登录凭据，不要提交到 Git、上传到公开服务或长期保留。
 - 登录缓存使用 AES-256-GCM 加密、文件权限 `0600`，应用目录权限为 `0700`，并按缓存内的 `updatedAt` 在 30 天后失效；`douban logout` 会删除本地缓存，不会退出浏览器中的豆瓣账号。
 - macOS 将登录缓存和配置保存在 `~/Library/Application Support/douban-cli/`；Linux 分别使用 `$XDG_STATE_HOME/douban-cli/` 和 `$XDG_CONFIG_HOME/douban-cli/`（未设置时使用标准默认目录）；Windows 分别使用 `%LOCALAPPDATA%\douban-cli\` 和 `%APPDATA%\douban-cli\`。
 - 可将 `DOUBAN_CLI_HOME` 设为绝对路径，让登录缓存和配置统一存放到指定目录。旧的 `~/.douban-cli-auth.json` 与 `~/.douban-cli.json` 会在验证迁移结果后自动删除。

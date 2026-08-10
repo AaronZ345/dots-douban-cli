@@ -12,6 +12,7 @@ import {
   migratePrivateFile,
   secureAtomicWriteFile
 } from './storage/secure-file.js';
+import { CliArgumentError } from './utils/error.js';
 
 export interface AuthSession {
   dbcl2: string;
@@ -44,6 +45,8 @@ const AUTH_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const AUTH_CACHE_CLOCK_SKEW_MS = 5 * 60 * 1000;
 const DEFAULT_COOKIE_TIMEOUT_MS = 60_000;
 const MAX_COOKIE_TIMEOUT_MS = 300_000;
+const MAX_COOKIE_STDIN_BYTES = 16 * 1024;
+const MAX_COOKIE_FILE_BYTES = 128 * 1024;
 
 export type BrowserName = 'chrome' | 'arc' | 'edge' | 'firefox' | 'safari';
 type CookieBackendName = 'chrome' | 'edge' | 'firefox' | 'safari';
@@ -59,6 +62,15 @@ export interface LoginOptions {
   cookieTimeoutMs?: number;
   open?: boolean;
 }
+
+export interface ParsedAuthCookies {
+  dbcl2: string;
+  ck?: string;
+}
+
+export type CookieInputStream = AsyncIterable<Buffer | string> & {
+  isTTY?: boolean;
+};
 
 function asObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -87,6 +99,106 @@ function normalizeAuthCookieValue(value: string, stripQuotes = false): string | 
     return code <= 0x1f || code === 0x7f || character === ';';
   });
   return normalized && !hasInvalidCharacters ? normalized : null;
+}
+
+function hasControlCharacters(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f;
+  });
+}
+
+function addParsedCookie(
+  parsed: Partial<ParsedAuthCookies>,
+  name: keyof ParsedAuthCookies,
+  rawValue: string
+): boolean {
+  if (parsed[name] !== undefined) return false;
+  const value = normalizeAuthCookieValue(rawValue, true);
+  if (!value) return false;
+  parsed[name] = value;
+  return true;
+}
+
+/** Parse a Cookie request header and retain only the authentication cookies. */
+export function parseCookieHeader(header: string): ParsedAuthCookies | null {
+  if (!header || Buffer.byteLength(header, 'utf8') > MAX_COOKIE_STDIN_BYTES) return null;
+  const withoutTrailingNewline = header.endsWith('\r\n')
+    ? header.slice(0, -2)
+    : header.endsWith('\n')
+      ? header.slice(0, -1)
+      : header;
+  if (hasControlCharacters(withoutTrailingNewline)) return null;
+
+  const cleaned = withoutTrailingNewline.trim().replace(/^cookie\s*:\s*/i, '');
+  if (!cleaned) return null;
+
+  const parsed: Partial<ParsedAuthCookies> = {};
+  for (const rawSegment of cleaned.split(';')) {
+    const segment = rawSegment.trim();
+    if (!segment) continue;
+
+    const separator = segment.indexOf('=');
+    if (separator <= 0) return null;
+    const name = segment.slice(0, separator).trim();
+    if (name !== 'dbcl2' && name !== 'ck') continue;
+    if (!addParsedCookie(parsed, name, segment.slice(separator + 1))) return null;
+  }
+
+  return parsed.dbcl2
+    ? { dbcl2: parsed.dbcl2, ...(parsed.ck ? { ck: parsed.ck } : {}) }
+    : null;
+}
+
+function isSupportedDoubanCookieScope(value: string, includeSubdomainsValue: string): boolean {
+  const rawDomain = value.trim().toLowerCase();
+  const domain = rawDomain.startsWith('.') ? rawDomain.slice(1) : rawDomain;
+  const validLabels = domain.length <= 253 && domain.split('.').every((label) => (
+    /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)
+  ));
+  if (!validLabels) return false;
+
+  const includeSubdomains = includeSubdomainsValue.trim().toUpperCase();
+  if (includeSubdomains !== 'TRUE' && includeSubdomains !== 'FALSE') return false;
+  if (domain === 'www.douban.com') return true;
+  return domain === 'douban.com' && includeSubdomains === 'TRUE';
+}
+
+function isCurrentNetscapeCookie(expires: string): boolean {
+  if (!/^\d+$/.test(expires)) return false;
+  const timestamp = Number(expires);
+  return Number.isSafeInteger(timestamp)
+    && (timestamp === 0 || timestamp > Math.floor(Date.now() / 1000));
+}
+
+/** Parse a Netscape cookies.txt export and retain valid Douban authentication cookies. */
+export function parseNetscapeCookies(contents: string): ParsedAuthCookies | null {
+  if (!contents || Buffer.byteLength(contents, 'utf8') > MAX_COOKIE_FILE_BYTES) return null;
+
+  const parsed: Partial<ParsedAuthCookies> = {};
+  const lines = contents.replace(/^\uFEFF/, '').split(/\r?\n/);
+
+  for (const rawLine of lines) {
+    if (!rawLine.trim()) continue;
+
+    const withoutHttpOnlyPrefix = rawLine.replace(/^#HttpOnly_/i, '');
+    if (withoutHttpOnlyPrefix.trimStart().startsWith('#')) continue;
+
+    const fields = withoutHttpOnlyPrefix.split('\t');
+    if (fields.length !== 7) continue;
+
+    const [domain, includeSubdomains, cookiePath, , expires, rawName, rawValue] = fields;
+    const name = rawName?.trim();
+    if (name !== 'dbcl2' && name !== 'ck') continue;
+    if (!domain || !includeSubdomains || !isSupportedDoubanCookieScope(domain, includeSubdomains)) continue;
+    if (cookiePath?.trim() !== '/') continue;
+    if (!expires || !isCurrentNetscapeCookie(expires.trim())) continue;
+    if (rawValue === undefined || !addParsedCookie(parsed, name, rawValue)) return null;
+  }
+
+  return parsed.dbcl2
+    ? { dbcl2: parsed.dbcl2, ...(parsed.ck ? { ck: parsed.ck } : {}) }
+    : null;
 }
 
 function normalizeDisplayText(value: unknown): string | undefined {
@@ -344,6 +456,105 @@ function createSession(dbcl2: string, ck: string | undefined, source: string): A
     source,
     updatedAt: new Date().toISOString()
   };
+}
+
+function decodeCookieInput(contents: Buffer): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(contents);
+  } catch (error) {
+    throw new CliArgumentError('Cookie 输入必须是 UTF-8 文本', { cause: error });
+  }
+}
+
+async function readCookieStdin(stream: CookieInputStream): Promise<Buffer> {
+  if (stream.isTTY === true) {
+    throw new CliArgumentError('--cookie-stdin 只接受管道或重定向输入；请勿把 Cookie 放在命令行参数或环境变量中');
+  }
+
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  try {
+    for await (const chunk of stream) {
+      const buffer = Buffer.isBuffer(chunk) ? Buffer.from(chunk) : Buffer.from(chunk, 'utf8');
+      totalBytes += buffer.length;
+      if (totalBytes > MAX_COOKIE_STDIN_BYTES) {
+        buffer.fill(0);
+        throw new CliArgumentError(`Cookie 标准输入不能超过 ${MAX_COOKIE_STDIN_BYTES / 1024} KiB`);
+      }
+      chunks.push(buffer);
+    }
+
+    if (totalBytes === 0) throw new CliArgumentError('Cookie 标准输入为空');
+    return Buffer.concat(chunks, totalBytes);
+  } finally {
+    for (const chunk of chunks) chunk.fill(0);
+  }
+}
+
+function readCookieFile(filePath: string): Buffer {
+  const selectedPath = filePath.trim();
+  if (!selectedPath) throw new CliArgumentError('Cookie 文件路径不能为空');
+
+  const resolvedPath = path.resolve(selectedPath);
+  let stat;
+  try {
+    stat = lstatSync(resolvedPath);
+  } catch (error) {
+    throw new CliArgumentError('无法读取 Cookie 文件', { cause: error });
+  }
+
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new CliArgumentError('Cookie 文件必须是普通文件，不能是符号链接');
+  }
+  if (stat.size === 0) throw new CliArgumentError('Cookie 文件为空');
+  if (stat.size > MAX_COOKIE_FILE_BYTES) {
+    throw new CliArgumentError(`Cookie 文件不能超过 ${MAX_COOKIE_FILE_BYTES / 1024} KiB`);
+  }
+
+  try {
+    return readFileSync(resolvedPath);
+  } catch (error) {
+    throw new CliArgumentError('无法读取 Cookie 文件', { cause: error });
+  }
+}
+
+async function verifyAndSaveManualCookies(
+  parsed: ParsedAuthCookies,
+  source: 'Manual stdin' | 'Manual file'
+): Promise<VerifiedAuthSession> {
+  const selected = await selectVerifiedSession([
+    createSession(parsed.dbcl2, parsed.ck, source)
+  ]);
+  saveAuthCache(selected);
+  return selected;
+}
+
+export async function loginFromCookieStdin(
+  stream: CookieInputStream = input as CookieInputStream
+): Promise<VerifiedAuthSession> {
+  const contents = await readCookieStdin(stream);
+  try {
+    const parsed = parseCookieHeader(decodeCookieInput(contents));
+    if (!parsed) {
+      throw new CliArgumentError('Cookie 标准输入无效或缺少 dbcl2；请传入单行 Cookie 请求头');
+    }
+    return await verifyAndSaveManualCookies(parsed, 'Manual stdin');
+  } finally {
+    contents.fill(0);
+  }
+}
+
+export async function loginFromCookieFile(filePath: string): Promise<VerifiedAuthSession> {
+  const contents = readCookieFile(filePath);
+  try {
+    const parsed = parseNetscapeCookies(decodeCookieInput(contents));
+    if (!parsed) {
+      throw new CliArgumentError('Cookie 文件无效或缺少有效的豆瓣 dbcl2；仅支持 Netscape cookies.txt');
+    }
+    return await verifyAndSaveManualCookies(parsed, 'Manual file');
+  } finally {
+    contents.fill(0);
+  }
 }
 
 interface SweetCookieResult {
@@ -808,23 +1019,30 @@ async function verifyAuthSession(session: AuthSession): Promise<VerifiedAuthSess
 
 async function selectVerifiedSession(candidates: AuthSession[]): Promise<VerifiedAuthSession> {
   const verified: VerifiedAuthSession[] = [];
-  const failedSources: string[] = [];
+  const failures: Array<{ source: string; error: unknown }> = [];
 
   for (const candidate of candidates) {
     try {
       verified.push(await verifyAuthSession(candidate));
     } catch (error) {
-      failedSources.push(candidate.source);
-      reportRecoverableError(`验证 ${candidate.source} 登录态失败`, error);
+      failures.push({ source: candidate.source, error });
     }
   }
 
   if (verified.length === 0) {
-    throw new Error('未找到可验证的豆瓣登录态，请确认登录完成后重试');
+    const firstFailure = failures[0]?.error;
+    if (failures.length === 1) {
+      throw firstFailure instanceof Error ? firstFailure : new Error(String(firstFailure));
+    }
+    throw new Error('未找到可验证的豆瓣登录态，请确认登录完成后重试', {
+      cause: firstFailure instanceof Error ? firstFailure : undefined
+    });
   }
 
-  if (candidates.length > 1 && failedSources.length > 0) {
-    throw new Error(`部分浏览器登录态无法验证（${failedSources.join(', ')}），请使用 --browser 并按需配合 --profile 明确选择`);
+  if (candidates.length > 1 && failures.length > 0) {
+    throw new Error(`部分浏览器登录态无法验证（${failures.map(({ source }) => source).join(', ')}），请使用 --browser 并按需配合 --profile 明确选择`, {
+      cause: failures[0]?.error instanceof Error ? failures[0].error : undefined
+    });
   }
 
   const accounts = new Map<string, VerifiedAuthSession[]>();
@@ -857,6 +1075,7 @@ export async function loginFromBrowserCookies(
 
 export async function loginWithBrowser(options: LoginOptions = {}): Promise<VerifiedAuthSession> {
   validateLoginOptions(options);
+  assertInteractiveLogin(input.isTTY);
 
   const selectedBrowser = options.browser ?? detectDefaultBrowser();
   if (options.open) openLoginPage(options);

@@ -32,12 +32,84 @@ export type CliErrorPayload = {
   };
 };
 
+export class CliArgumentError extends Error {
+  readonly code = 'INVALID_ARGUMENT';
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'CliArgumentError';
+  }
+}
+
 function toMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function redactSensitiveArguments(
+  message: string,
+  argv: readonly string[] = process.argv.slice(2)
+): string {
+  let redacted = message;
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (!argument) continue;
+
+    const assignment = argument.match(/^(--cookie(?:-stdin)?=)/i);
+    if (assignment) {
+      redacted = redacted.replaceAll(argument, `${assignment[1]}[REDACTED]`);
+      continue;
+    }
+
+    const previous = argv[index - 1]?.toLowerCase();
+    const followsSensitiveOption = (
+      previous === '--cookie' || previous === '--cookie-stdin'
+    ) && !argument.startsWith('-');
+    const containsAuthCookie = /(?:^|[;\s])(?:dbcl2|ck)\s*=/i.test(argument);
+    if (followsSensitiveOption || containsAuthCookie) {
+      redacted = redacted.replaceAll(argument, '[REDACTED]');
+    }
+  }
+
+  return redacted.replace(
+    /\b(dbcl2|ck)\s*=\s*(?:"[^"\r\n;]*"|'[^'\r\n;]*'|[^;\s'"\r\n]*)/gi,
+    '$1=[REDACTED]'
+  );
+}
+
 function isCommanderError(error: unknown): error is CommanderErrorLike {
   return error instanceof Error && 'code' in error && String((error as CommanderErrorLike).code).startsWith('commander.');
+}
+
+function structuredErrorCode(error: unknown): CliErrorCode | undefined {
+  const visited = new Set<Error>();
+  let current = error;
+
+  while (current instanceof Error && !visited.has(current)) {
+    visited.add(current);
+    const structuredCode = 'code' in current
+      ? String((current as Error & { code?: unknown }).code || '')
+      : '';
+    const structuredStatus = 'status' in current
+      ? Number((current as Error & { status?: unknown }).status)
+      : Number.NaN;
+
+    if (structuredCode === 'NETWORK') return 'NETWORK_ERROR';
+    if (structuredCode === 'INVALID_ARGUMENT') return 'INVALID_ARGUMENT';
+    if (structuredCode === 'AUTH_REQUIRED') return 'AUTH_REQUIRED';
+    if (structuredCode === 'HTTP_STATUS') {
+      if (structuredStatus === 401) return 'AUTH_REQUIRED';
+      if (structuredStatus === 404) return 'NOT_FOUND';
+      return 'HTTP_ERROR';
+    }
+    if (['CHALLENGE', 'CONTENT_TYPE', 'INVALID_JSON', 'REDIRECT', 'SCHEMA_MISMATCH'].includes(structuredCode)) {
+      return 'HTTP_ERROR';
+    }
+
+    current = current.cause;
+  }
+
+  return undefined;
 }
 
 function classifyError(error: unknown, message: string): CliErrorCode {
@@ -48,22 +120,8 @@ function classifyError(error: unknown, message: string): CliErrorCode {
     return 'INVALID_ARGUMENT';
   }
 
-  const structuredCode = error instanceof Error && 'code' in error
-    ? String((error as Error & { code?: unknown }).code || '')
-    : '';
-  const structuredStatus = error instanceof Error && 'status' in error
-    ? Number((error as Error & { status?: unknown }).status)
-    : Number.NaN;
-  if (structuredCode === 'NETWORK') return 'NETWORK_ERROR';
-  if (structuredCode === 'AUTH_REQUIRED') return 'AUTH_REQUIRED';
-  if (structuredCode === 'HTTP_STATUS') {
-    if (structuredStatus === 401) return 'AUTH_REQUIRED';
-    if (structuredStatus === 404) return 'NOT_FOUND';
-    return 'HTTP_ERROR';
-  }
-  if (['CHALLENGE', 'CONTENT_TYPE', 'INVALID_JSON', 'REDIRECT', 'SCHEMA_MISMATCH'].includes(structuredCode)) {
-    return 'HTTP_ERROR';
-  }
+  const structuredCode = structuredErrorCode(error);
+  if (structuredCode) return structuredCode;
 
   const normalized = message.toLowerCase();
   if (
@@ -114,15 +172,18 @@ export function isJsonOutputRequested(argv: readonly string[] = process.argv.sli
 }
 
 function createErrorPayload(error: unknown, ctx: CommandErrorContext): CliErrorPayload {
-  const message = toMessage(error);
+  const rawMessage = toMessage(error);
+  const message = redactSensitiveArguments(rawMessage);
+  const target = ctx.target ? redactSensitiveArguments(ctx.target) : undefined;
+  const suggestion = ctx.suggestion ? redactSensitiveArguments(ctx.suggestion) : undefined;
   return {
     ok: false,
     error: {
-      code: classifyError(error, message),
+      code: classifyError(error, rawMessage),
       message,
       command: ctx.command,
-      ...(ctx.target ? { target: ctx.target } : {}),
-      ...(ctx.suggestion ? { suggestion: ctx.suggestion } : {})
+      ...(target ? { target } : {}),
+      ...(suggestion ? { suggestion } : {})
     }
   };
 }
@@ -134,12 +195,12 @@ function printCliError(error: unknown, ctx: CommandErrorContext): void {
     return;
   }
 
-  const target = ctx.target ? ` (${ctx.target})` : '';
-  console.error(`❌ [${payload.error.code}] ${payload.error.message}${target}`);
+  const safeTarget = payload.error.target ? ` (${payload.error.target})` : '';
+  console.error(`❌ [${payload.error.code}] ${payload.error.message}${safeTarget}`);
   if (ctx.options) {
-    console.error(`   可选项：${ctx.options}`);
+    console.error(`   可选项：${redactSensitiveArguments(ctx.options)}`);
   }
-  console.error(`   提示：${ctx.suggestion || '运行 douban --help 查看完整用法'}`);
+  console.error(`   提示：${payload.error.suggestion || '运行 douban --help 查看完整用法'}`);
 }
 
 export function withErrorHandler<T extends unknown[]>(
