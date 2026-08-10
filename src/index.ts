@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Command } from 'commander';
+import { Command, Help } from 'commander';
 import { createRequire } from 'node:module';
 import { registerBookCommands } from './commands/book.js';
 
@@ -23,6 +23,11 @@ program
 
 program.configureHelp({
   formatHelp: (cmd) => {
+    if (cmd.parent) {
+      const defaultHelp = new Help();
+      return defaultHelp.formatHelp(cmd, defaultHelp);
+    }
+
     const title = `douban - 豆瓣命令行工具 v${cmd.version()}\n`;
     const usage = `用法: douban <command> [options]\n`;
 
@@ -57,6 +62,8 @@ program.configureHelp({
     output += '  douban search 沙丘     搜索电影\n';
     output += '  douban top250          豆瓣 Top 250\n';
     output += '  douban movie 1292052   查看电影详情\n';
+    output += '  douban book chart      查看当前热门图书榜\n';
+    output += '  douban book info 三体  查看书籍详情\n';
 
     return output;
   }
