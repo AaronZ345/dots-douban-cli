@@ -122,7 +122,7 @@ douban reviews 1291546 --limit 5
 | `douban book reviews <query>` | 热门书评 | `--page`、`--limit` |
 | `douban book notes <query>` | 热门读书笔记 | `--page`、`--limit` |
 | `douban book user <userId>` | 公开的想读/在读/读过书单 | `--wish`、`--reading`、`--page`、`--limit` |
-| `douban book export <userId>` | 将公开书单导出到文件 | `--wish`、`--reading`、`--limit`、`--output`、`--format` |
+| `douban book export <userId>` | 将公开书单导出到文件 | `--wish`、`--reading`、`--limit`、`--output`、`--format`、`--delay` |
 
 `book chart` 和 `book new` 支持：全部、文学、小说、历史文化、社会纪实、科学新知、艺术设计、商业经管、绘本漫画。
 
@@ -145,7 +145,7 @@ douban book notes 三体 --limit 5
 # 公开书单
 douban book user USER_ID --wish --page 2
 douban book user USER_ID --reading
-douban book export USER_ID --wish --limit 100 -o books.md
+douban book export USER_ID --wish --limit 100 --delay 2 -o books.md
 douban book export USER_ID --reading -f csv -o reading.csv
 ```
 
@@ -181,13 +181,16 @@ douban login
 douban whoami
 ```
 
-`login` 会打开豆瓣登录页；完成登录并回到终端确认后，CLI 才从本机浏览器读取豆瓣所需的 `dbcl2` / `ck` Cookie。默认检查 Chrome、Edge、Firefox 和 Safari；多浏览器或多账号环境建议明确选择来源：
+`login` 默认不会启动浏览器。它会识别系统默认浏览器，说明即将读取的来源，并在你确认后只读取一次豆瓣所需的 `dbcl2` / `ck` Cookie。浏览器已有登录态时无需再次输入账号密码；尚未登录时可加 `--open` 打开当前账号页。多浏览器或多账号环境可以明确选择来源：
 
 ```bash
+douban login --browser arc
+douban login --open
 douban login --browser chrome --profile "Profile 2"
+douban login --browser chrome --cookie-timeout 120
 ```
 
-`--profile` 必须与 `--browser` 一起使用，Safari 不支持指定 profile。登录缓存会加密保存在本地，账号写操作前会重新核对身份。
+未传 `--browser` 时，CLI 会识别系统 HTTPS 默认浏览器，只从同一个来源读取 Cookie，避免扫描多个浏览器和重复触发钥匙串授权。只有显式传入 `--open` 才会启动该浏览器并打开豆瓣当前账号页；这个窗口只是登录入口，最终保存哪个账号以 Cookie 验证结果为准。`--open` 不能与 `--profile` 同用：需要指定 profile 时，请先手动打开该 profile，再运行不带 `--open` 的登录命令。`--browser` 支持 Chrome、Edge、Firefox、Safari 和 Arc，其中 Safari 与 Arc 仅支持 macOS。`--profile` 必须与 `--browser` 一起使用，Safari 不支持指定 profile。浏览器 Cookie 和系统钥匙串默认等待 60 秒，可用 `--cookie-timeout` 调整为 1-300 秒。`login` 需要交互式终端，不能通过管道或 CI 输入启动。macOS 首次读取 Chromium 浏览器登录态时可能弹出 Safe Storage 授权，请选择允许。登录缓存会加密保存在本地，账号写操作前会重新核对身份。
 
 ### 电影标记、评分与评论
 
@@ -211,7 +214,7 @@ douban review 1292052 "标题" --file review.md
 
 ```bash
 douban feed --limit 10
-douban stats --year 2026
+douban stats --year 2026 --limit 30 --delay 2
 douban export --format json -o douban-export.json
 douban export --format csv -o douban-export.csv
 
@@ -220,16 +223,16 @@ douban unfollow USER_ID
 douban logout
 ```
 
-`stats` 基于最近最多 1000 条“看过”记录统计总数、月份分布和平均分，因此较早年份可能不完整。账号 `export --limit` 分别应用于看过、想看和在看三种状态，总条数最多可能接近 `3 × limit`。
+`stats` 默认基于最近最多 1000 条“看过”记录统计总数、月份分布和平均分，因此较早年份可能不完整；可用 `--limit` 调整读取量。`stats`、账号 `export` 和 `book export` 默认在分页请求之间等待 1 秒，可用 `--delay` 调整。账号 `export --delay` 同时用于同一状态的分页和看过/想看/在看三种状态之间；其 `--limit` 分别应用于三种状态，总条数最多可能接近 `3 × limit`。
 
 ## 📦 两种导出
 
 | 命令 | 数据 | 登录 | 格式 | 说明 |
 |---|---|---|---|---|
-| `douban book export <userId>` | 指定用户的公开想读/在读/读过 | 不需要 | Markdown、CSV、JSON | 必须指定 `--output`；未传 `--format` 时按扩展名推断；最多 5000 条 |
-| `douban export` | 当前账号的电影看过/想看/在看 | 需要 | CSV、JSON | 必须指定 `--output`；可能包含评分、短评和用户信息 |
+| `douban book export <userId>` | 指定用户的公开想读/在读/读过 | 不需要 | Markdown、CSV、JSON | 必须指定 `--output`；未传 `--format` 时按扩展名推断；最多 5000 条；`--delay` 控制分页间隔 |
+| `douban export` | 当前账号的电影看过/想看/在看 | 需要 | CSV、JSON | 必须指定 `--output`；可能包含评分、短评和用户信息；`--delay` 控制分页和状态切换间隔 |
 
-图书导出在后续页面请求失败时会保留已经取得的数据，并在导出元数据和 stderr 中标记 `partial` / warning。
+两种导出在后续页面请求失败时都会保留已经取得的数据，并通过 stderr 明确告警。JSON 文件还会写入 `metadata.partial` 和 `metadata.warnings`；CSV/Markdown 会在完成提示中标明结果可能不完整。
 
 ## 🧰 批量操作
 
