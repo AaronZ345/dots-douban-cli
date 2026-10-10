@@ -1,6 +1,6 @@
 # douban-cli
 
-This is a local Douban CLI, derived from Marvae/douban-cli under MIT. Keep the original LICENSE and source attribution. The executable, package and skill are named `douban-cli`; storage is separately namespaced as `douban-cli-local`.
+This is a local Douban CLI released under MIT. Preserve the copyright and permission notices in LICENSE. The executable, package and skill are named `douban-cli`; storage is separately namespaced as `douban-cli-local`.
 
 - Use TypeScript ESM and keep command orchestration in `src/commands`, transport and parsing in `src/api`.
 - Preserve unknown values as null and report partial reads with metadata and warnings.

@@ -153,8 +153,6 @@ CI 在 Linux、macOS、Windows 上检查 Node 22/24，并运行 Chromium、Firef
 
 登录缓存加密保存在本机独立应用目录。`doctor` 默认只检查运行时、文件类型和权限，不读取登录文件内容。测试使用公开查询或合成夹具，不操作真实账号。
 
-## 来源与许可证
-
-本项目基于 [Marvae/douban-cli](https://github.com/Marvae/douban-cli)，保留其 MIT 许可证，并增加图书记录编辑、豆列分页、浏览器适配、诊断和 MCP 接口。
+## 许可证
 
 这是非官方豆瓣工具，采用 [MIT License](LICENSE)。问题和复现步骤请提交到 [Issues](https://github.com/AaronZ345/douban-cli/issues)。
