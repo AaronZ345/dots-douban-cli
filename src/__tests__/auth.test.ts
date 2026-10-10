@@ -47,6 +47,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.doUnmock('@steipete/sweet-cookie');
+  vi.doUnmock('../browser-cookies.js');
   vi.doUnmock('node:child_process');
   vi.doUnmock('node:readline/promises');
   if (originalStdinIsTty) Object.defineProperty(process.stdin, 'isTTY', originalStdinIsTty);
@@ -323,6 +324,7 @@ describe.sequential('authentication safety', () => {
       default: { createInterface: () => ({ question, close }) }
     }));
     vi.doMock('@steipete/sweet-cookie', () => ({ getCookies }));
+    vi.doMock('../browser-cookies.js', () => ({ readChromiumCookies: getCookies, resolveCookieDatabases: vi.fn() }));
     vi.stubGlobal('fetch', vi.fn(async () => new Response(profileHtml('alice', 'Alice'), { status: 200 })));
     Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
     const auth = await import('../auth.ts');
