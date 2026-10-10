@@ -22,7 +22,7 @@ const pkg = require('../package.json') as { version?: string };
 const program = new Command();
 
 program
-  .name('dots-douban-cli')
+  .name('douban-cli')
   .description('豆瓣命令行工具（电影 / 书籍 / 用户）')
   .version(pkg.version || '0.0.0', '-V, --version', '显示版本')
   .helpOption('-h, --help', '显示帮助')
@@ -77,7 +77,7 @@ program.configureHelp({
   )
 });
 
-program.addHelpText('beforeAll', () => `dots-douban-cli - 豆瓣命令行工具 v${program.version()}\n`);
+program.addHelpText('beforeAll', () => `douban-cli - 豆瓣命令行工具 v${program.version()}\n`);
 program.addHelpText('after', () => `
 示例:
   douban-cli hot             查看热门电影

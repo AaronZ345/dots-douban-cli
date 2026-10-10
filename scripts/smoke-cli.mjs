@@ -17,7 +17,7 @@ function run(...args) {
 
 const rootHelp = run('--help');
 assert.equal(rootHelp.status, 0);
-assert.match(rootHelp.stdout, /dots-douban-cli - 豆瓣命令行工具 v\d+/);
+assert.match(rootHelp.stdout, /douban-cli - 豆瓣命令行工具 v\d+/);
 assert.doesNotMatch(rootHelp.stdout, /vundefined/);
 assert.match(rootHelp.stdout, /电影:/);
 assert.match(rootHelp.stdout, /书籍:/);
@@ -94,7 +94,7 @@ for (const removedCommand of [
 
 const bookHelp = run('book', '--help');
 assert.equal(bookHelp.status, 0);
-assert.match(bookHelp.stdout, /Usage: dots-douban-cli book/);
+assert.match(bookHelp.stdout, /Usage: douban-cli book/);
 assert.match(bookHelp.stdout, /top250/);
 assert.match(bookHelp.stdout, /chart/);
 assert.match(bookHelp.stdout, /comments/);

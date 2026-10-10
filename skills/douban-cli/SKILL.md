@@ -1,6 +1,6 @@
 ---
-name: dots-douban-cli
-description: 查询豆瓣电影、图书、公开豆列与明确指定的账号记录，或编辑用户明确要求修改的短评和评分；使用本地 dots-douban-cli，支持 MCP。普通口味推荐不触发。
+name: douban-cli
+description: 查询豆瓣电影、图书、公开豆列与明确指定的账号记录，或编辑用户明确要求修改的短评和评分；使用本地 douban-cli，支持 MCP。普通口味推荐不触发。
 metadata:
   origin: local
   owner: aaron
@@ -8,7 +8,7 @@ metadata:
 
 # 豆瓣 CLI
 
-使用已安装的 `dots-douban-cli`；`douban-cli` 是兼容别名。开始排错时运行 `dots-douban-cli doctor --json`。此命令默认不读取登录内容。公开查询不用登录，不扫描浏览器 Cookie。
+使用已安装的 `douban-cli`。排错先运行 `douban-cli doctor --json`，默认不读取登录内容。公开查询不用登录，也不扫描浏览器 Cookie。
 
 ## 路由
 
@@ -35,4 +35,4 @@ CLI 编辑不触发广播分享。项目开发、演示与测试只用公开数�
 
 需要执行网页 JavaScript 时使用 `--transport browser --read-browser chromium`；Firefox 和 WebKit 是 Playwright 构建，WebKit 不等于原版 Safari。浏览器支持范围以仓库兼容性文档为准。
 
-本地 MCP 入口为 `dots-douban-cli mcp`。写工具默认预览，只有用户明确要求实际修改时使用 `dryRun=false`。MCP 与 CLI 共用数据处理，不提供原始登录凭据读取接口。
+本地 MCP 入口为 `douban-cli mcp`。写工具默认预览，只有用户明确要求实际修改时使用 `dryRun=false`。MCP 与 CLI 共用数据处理，不提供原始登录凭据读取接口。

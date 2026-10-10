@@ -1,11 +1,10 @@
 {
-  "name": "dots-douban-cli",
-  "version": "0.2.0",
+  "name": "douban-cli",
+  "version": "0.2.1",
   "description": "豆瓣书影、片单与个人短评管理 CLI",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "dots-douban-cli": "dist/index.js",
     "douban-cli": "dist/index.js"
   },
   "scripts": {
@@ -45,7 +44,6 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/client": "^2.3.1",
     "@modelcontextprotocol/server": "^2.3.1",
     "@steipete/sweet-cookie": "0.4.1",
     "cheerio": "^1.2.0",
@@ -62,7 +60,8 @@
     "eslint": "^10.8.1",
     "globals": "^17.9.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "@modelcontextprotocol/client": "^2.3.1"
   },
   "files": [
     "dist",
@@ -73,10 +72,19 @@
     "skills",
     "docs",
     "CHANGELOG.md",
-    "scripts/install-skill.mjs"
+    "scripts/install-skill.mjs",
+    "CONTRIBUTING.md"
   ],
   "engines": {
     "node": ">=22.13.0"
   },
-  "private": true
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AaronZ345/douban-cli.git"
+  },
+  "homepage": "https://github.com/AaronZ345/douban-cli#readme",
+  "bugs": {
+    "url": "https://github.com/AaronZ345/douban-cli/issues"
+  }
 }

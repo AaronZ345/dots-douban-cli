@@ -46,7 +46,7 @@ function response(value: unknown): CallToolResult {
 }
 
 export function createMcpServer(runner: CliRunner = runCli): McpServer {
-  const server = new McpServer({name:'dots-douban-cli',version:'0.2.0'},{capabilities:{tools:{}}});
+  const server = new McpServer({name:'douban-cli',version:'0.2.1'},{capabilities:{tools:{}}});
   let queue: Promise<unknown> = Promise.resolve();
   const serialized = (entry:'douban',args:string[]) => {
     const result=queue.then(()=>runner(entry,args));

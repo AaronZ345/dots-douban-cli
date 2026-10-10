@@ -1,3 +1,5 @@
+import path from 'node:path';
+import os from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Command } from 'commander';
 
@@ -134,6 +136,7 @@ describe('social commands', () => {
   });
 
   it('uses the verified session identity for all export collections', async () => {
+    const outputPath = path.join(os.tmpdir(), 'douban-cli-records.json');
     mocks.ensureAuth.mockResolvedValue(verifiedSession());
     mocks.getCollectionRecords.mockResolvedValue({ records: [], partial: false, warnings: [] });
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -143,7 +146,7 @@ describe('social commands', () => {
       'douban',
       'export',
       '--output',
-      '/tmp/records.json',
+      outputPath,
       '--delay',
       '2'
     ]);
@@ -162,7 +165,7 @@ describe('social commands', () => {
     expect(mocks.sleep).toHaveBeenNthCalledWith(1, 2000);
     expect(mocks.sleep).toHaveBeenNthCalledWith(2, 2000);
     expect(mocks.secureAtomicWriteFile).toHaveBeenCalledWith(
-      '/tmp/records.json',
+      outputPath,
       expect.stringContaining('"id": "alice"')
     );
   });

@@ -1,79 +1,160 @@
-# dots-douban-cli
+<div align="center">
 
-豆瓣电影、图书、豆列与记录管理工具。主命令 `dots-douban-cli`，兼容别名 `douban-cli`。
+# douban-cli
 
-版本：0.2.0。基于 [Marvae/douban-cli](https://github.com/Marvae/douban-cli) 的 MIT 代码开发，保留原许可证。项目示例、测试和文档仅使用公开或合成匿名数据。
+**在终端查书影、读片单，管理自己的评分和短评。**
+
+也可作为本地工具，供 ChatGPT Dots 和支持 MCP 的助手调用。
+
+[![CI](https://github.com/AaronZ345/douban-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/AaronZ345/douban-cli/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/AaronZ345/douban-cli)](https://github.com/AaronZ345/douban-cli/releases/latest)
+[![Node.js](https://img.shields.io/badge/Node.js-%E2%89%A522.13-43853d)](https://nodejs.org/)
+[![MIT](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
+
+[安装](#安装) · [常用命令](#常用命令) · [Dots 接入](#dots-接入) · [浏览器](#浏览器) · [开发](CONTRIBUTING.md)
+
+</div>
+
+## 能做什么
+
+| 功能 | 内容 |
+|---|---|
+| 电影与剧集 | 搜索、详情、热门、类型排行、Top250、口碑榜、待上映、评分与评论 |
+| 图书 | 书名、作者和 ISBN 搜索，详情、榜单、新书、书评与读书笔记 |
+| 豆列 | 按 ID 或地址读取，自动翻页，按作品类型和关键词筛选 |
+| 个人记录 | 想看／在看／看过、想读／在读／读过；按日期、星级和文字筛选，导出 JSON 或 CSV |
+| 记录编辑 | 修改短评、评分、状态、标签和可见性；预览改动，提交后读回核对 |
+| 助手接入 | Agent Skill、6 个 MCP 工具，以及本地诊断命令 |
 
 ## 安装
 
-需要 Node.js >=22.13.0。
+需要 **Node.js 22.13 或更新版本**。安装已构建的发行包：
 
 ```bash
+npm install -g https://github.com/AaronZ345/douban-cli/releases/download/v0.2.1/douban-cli-0.2.1.tgz
+douban-cli --version
+douban-cli doctor --json
+```
+
+也可以从源码安装：
+
+```bash
+git clone https://github.com/AaronZ345/douban-cli.git
+cd douban-cli
 npm ci
 npm run build
 npm link --ignore-scripts
+```
+
+使用已安装的 Chrome 或 Edge 时，不必下载额外浏览器。需要 Playwright 的 Chromium、Firefox、WebKit 运行时，可以在源码目录执行：
+
+```bash
 npm run install:browsers
+```
+
+此脚本保留其他项目已经安装的 Playwright 浏览器。
+
+## 常用命令
+
+### 查电影和书
+
+```bash
+douban-cli search 沙丘 --limit 10 --json
+douban-cli movie 1292052 --json
+douban-cli rank 科幻 --limit 10
+douban-cli top250 --page 1
+douban-cli weekly
+
+douban-cli book search 三体 --json
+douban-cli book info 9787536692930 --json
+douban-cli book chart 小说
+douban-cli book new 科学新知
+```
+
+### 读片单和书单
+
+```bash
+douban-cli list 240962 --limit 30 --json
+douban-cli list https://www.douban.com/doulist/240962/ --kind movie --json
+douban-cli records --user USER_ID --kind book --status collect --limit 30 --json
+```
+
+`list --all` 默认最多读取 10000 条。日期、星级和关键词筛选作用于已读取的数据；需要更多结果时，调整 `--limit` 或使用返回的续读位置。
+
+### 登录并编辑记录
+
+```bash
+douban-cli login --launch --browser chromium
+douban-cli record get 1292052 --kind movie --json
+douban-cli record edit 1292052 --comment "短评内容" --dry-run --json
+```
+
+在打开的窗口中自行登录。确认预览后，移除 `--dry-run` 才会提交。图书使用 `--kind book`；`--clear-comment`、`--clear-rating`、`--clear-tags` 分别清空对应字段。
+
+未指定的字段会保留。提交前再次读取原值，发现变化就停止；提交后核对状态、评分、短评、标签和可见性。写入失败不自动重试，批量操作失败后，剩余条目标记为 `skipped`。
+
+兼容 `mark`、`rate`、`comment`、`unmark`、`review`、`stats`、`export`、`follow`、`unfollow`。图书另有 `book mark`、`book rate`、`book comment`、`book unmark`。具体参数见各命令的 `--help`。
+
+## Dots 接入
+
+**支持 ChatGPT Dots 通过已连接的电脑使用本工具。** CLI 和技能安装在这台电脑上；Dot 需要被允许访问该电脑，使用期间电脑要在线，ChatGPT 桌面应用要保持打开。[连接电脑的说明](https://learn.chatgpt.com/docs/dots/computers-and-apps)
+
+在源码目录安装技能：
+
+```bash
 npm run install:skill
 ```
 
-浏览器安装关闭 Playwright 的旧缓存回收。技能安装到当前 Codex home 下的 `skills/dots-douban-cli`，只更新同名本地技能。
+技能文件也随发行包提供，位于 `skills/douban-cli/SKILL.md`。可以让 Dot 读取这份说明，再调用本机命令。例如：
 
-## 公开查询
+> 使用这台电脑上的 douban-cli，查豆瓣科幻榜前 10 部电影，列出片名、年份、评分和 ID。
 
-```bash
-dots-douban-cli search 沙丘 --json
-dots-douban-cli movie 1292052 --json
-dots-douban-cli hot --limit 10
-dots-douban-cli tv 英剧 --limit 10
-dots-douban-cli rank 科幻 --limit 10
-dots-douban-cli top250 --page 1
-dots-douban-cli weekly
-dots-douban-cli coming
+> 读取我指定的片单。把获取失败的页面和因数量上限而没读到的部分说明白。
 
-dots-douban-cli book search 三体 --json
-dots-douban-cli book info 9787536692930 --json
-dots-douban-cli book chart 小说
-dots-douban-cli book new 科学新知
-dots-douban-cli book top250 --limit 10
+CLI 和本地技能通过电脑连接使用。MCP 则供支持 stdio 的客户端接入：
 
-dots-douban-cli list 240962 --limit 30 --json
-dots-douban-cli --transport browser --read-browser chromium list 240962 --limit 10 --json
+```json
+{
+  "mcpServers": {
+    "douban-cli": {
+      "command": "douban-cli",
+      "args": ["mcp"]
+    }
+  }
+}
 ```
 
-搜索、详情、评分、短评、长评和读书笔记入口与上游命令兼容。`list` 支持数字 ID 和豆瓣 HTTPS 地址，可按类型或关键词筛选。分页串行执行，失败即停；`--all` 默认上限 10000，达到上限会保留续读游标。
+MCP 写工具默认 `dryRun=true`。公开查询不读取浏览器登录态；账号操作只在明确请求时使用 CLI 已保存的登录态。[工具和参数说明](docs/MCP.md)
 
-`partial` / `warnings` 表示读取失败或残缺，`limited` 表示受到读取量限制，未知数值保留 `null`。不能把有限样本视为全量数据。
+## 浏览器
 
-## 记录编辑能力
+| 浏览器 | 使用方式 |
+|---|---|
+| Chromium、Chrome、Edge | 独立登录窗口和浏览器查询；Chrome、Edge 使用本机程序 |
+| Brave、Arc | 常见程序路径或 `--executable`；直接导入登录态目前限 macOS |
+| Firefox | 原版浏览器可导入登录态；自动化使用 Playwright Firefox |
+| WebKit | 使用 Playwright WebKit；与原版 Safari 分开 |
+| Safari | macOS 登录态导入；没有原版 Safari 自动操作 |
 
-原有 `mark`、`rate`、`comment`、`unmark`、`review`、`stats`、`export`、`follow`、`unfollow` 和配置命令保留。图书额外支持 `book mark`、`book rate`、`book comment`、`book unmark`。
-
-`record get` / `record edit` 只接受数字豆瓣 ID。编辑可指定短评、评分、状态、标签与可见性；未指定字段保留，支持分别清空。`--dry-run` 只预览。实际提交前检查原值，提交后读回核验；失败不自动重试，批量后续项标记 skipped。
-
-账号功能仅在用户明确调用时使用现有登录态。项目验收不读取私人记录，不索取或展示登录凭据，不触发广播分享。不添加书影同步或备份功能。
-
-## 诊断、技能与 MCP
-
-```bash
-dots-douban-cli doctor --json
-dots-douban-cli --transport browser doctor --online --json
-dots-douban-cli mcp
-```
-
-`doctor` 默认只检查运行时、文件类型和权限，不读取登录文件内容。可选公开网络检查。MCP 使用 stdio，6 个工具复用 CLI，按顺序调用，写工具默认预览。技能识别豆瓣相关请求，并保留现有授权范围。
-
-详见 [MCP 接入](docs/MCP.md) 和 [浏览器兼容性](docs/COMPATIBILITY.md)。
-
-## 验证与发布准备
+默认使用 HTTP。页面需要执行 JavaScript 时切到浏览器模式：
 
 ```bash
-npm run verify
-npm run test:mcp
-npm run test:browsers
-npm run test:live
-npm pack --dry-run --ignore-scripts
+douban-cli --transport browser --read-browser chromium top250 --json
 ```
 
-CI 配置 Ubuntu / macOS / Windows 与 Node 22/24；匿名浏览器检查覆盖 Chromium、Firefox、WebKit。标签发布流程会检查版本、执行测试并生成包。跨系统检查的运行结果以当前提交对应的 GitHub Actions 记录为准。
+CI 在 Linux、macOS、Windows 上检查 Node 22/24，并运行 Chromium、Firefox、WebKit 的匿名页面测试。真实站点登录和写入受豆瓣页面、限流和验证码影响；各浏览器的验收范围见 [兼容性记录](docs/COMPATIBILITY.md)。
 
-[测试记录](TEST_REPORT.md) 明确区分单元测试、匿名浏览器测试、公开在线读取和未经实际提交验证的写入。真实网页和非官方接口可能变化，测试结果只代表列明的范围。
+## 看懂结果
+
+- `partial` / `warnings`：部分页面或来源读取失败。
+- `limited`：到了读取数量上限，仍有内容未读取。
+- `nextStart` 等游标：继续读取的位置。
+- `null`：数值未知，不用 0 代替。
+
+登录缓存加密保存在本机独立应用目录。`doctor` 默认只检查运行时、文件类型和权限，不读取登录文件内容。测试使用公开查询或合成夹具，不操作真实账号。
+
+## 来源与许可证
+
+本项目基于 [Marvae/douban-cli](https://github.com/Marvae/douban-cli)，保留其 MIT 许可证，并增加图书记录编辑、豆列分页、浏览器适配、诊断和 MCP 接口。
+
+这是非官方豆瓣工具，采用 [MIT License](LICENSE)。问题和复现步骤请提交到 [Issues](https://github.com/AaronZ345/douban-cli/issues)。

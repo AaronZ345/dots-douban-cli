@@ -1,4 +1,4 @@
-# dots-douban-cli 验收记录
+# douban-cli 验收记录
 
 日期：2026-10-10。范围仅为豆瓣 CLI、豆瓣 MCP、诊断、技能与兼容性。
 

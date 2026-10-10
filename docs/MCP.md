@@ -1,12 +1,12 @@
 # 本地 MCP
 
-入口：`dots-douban-cli mcp`，传输为 stdio，标准输出仅承载 MCP 消息。
+入口：`douban-cli mcp`，传输为 stdio，标准输出仅承载 MCP 消息。
 
 ```json
 {
   "mcpServers": {
-    "dots-douban-cli": {
-      "command": "dots-douban-cli",
+    "douban-cli": {
+      "command": "douban-cli",
       "args": ["mcp"]
     }
   }
@@ -16,7 +16,7 @@
 Codex 注册命令：
 
 ```bash
-codex mcp add dots-douban-cli -- dots-douban-cli mcp
+codex mcp add douban-cli -- douban-cli mcp
 ```
 
 配置格式以 [OpenAI MCP 文档](https://learn.chatgpt.com/docs/extend/mcp?surface=cli) 和本机 `codex mcp --help` 为准。
