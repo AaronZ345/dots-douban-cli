@@ -25,5 +25,5 @@ jobs:
         run: |
           mkdir -p user/release
           npm pack --ignore-scripts --pack-destination user/release
-          sha256sum user/release/*.tgz > user/release/SHA256SUMS
+          (cd user/release && sha256sum *.tgz > SHA256SUMS)
           gh release create "$GITHUB_REF_NAME" user/release/*.tgz user/release/SHA256SUMS --verify-tag --notes-file CHANGELOG.md
