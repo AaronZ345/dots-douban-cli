@@ -11,6 +11,7 @@ import {
 import { CliArgumentError, withErrorHandler } from '../utils/error.js';
 import { parsePositiveIntAtMost } from '../utils/parsing.js';
 import { withSpinner } from '../utils/spinner.js';
+import { loginInBrowser, type LaunchBrowserName } from '../browser.js';
 
 function toSafeSessionJson(session: AuthSession): Record<string, string | undefined> {
   return {
@@ -21,13 +22,13 @@ function toSafeSessionJson(session: AuthSession): Record<string, string | undefi
   };
 }
 
-function parseBrowserName(value: string | undefined): BrowserName | undefined {
+function parseBrowserName(value: string | undefined): LaunchBrowserName | undefined {
   if (!value) return undefined;
   const normalized = value.trim().toLowerCase();
-  if (normalized === 'chrome' || normalized === 'arc' || normalized === 'edge' || normalized === 'firefox' || normalized === 'safari') {
+  if (normalized === 'chrome' || normalized === 'chromium' || normalized === 'brave' || normalized === 'arc' || normalized === 'edge' || normalized === 'firefox' || normalized === 'safari' || normalized === 'webkit') {
     return normalized;
   }
-  throw new Error('--browser 仅支持 chrome、arc、edge、firefox 或 safari');
+  throw new CliArgumentError('--browser 支持 chromium、chrome、edge、brave、arc、firefox、safari、webkit');
 }
 
 export function registerAuthCommands(program: Command): void {
@@ -39,12 +40,14 @@ export function registerAuthCommands(program: Command): void {
     .option('--profile <profile>', '指定浏览器配置目录（需配合 --browser）')
     .option('--cookie-timeout <seconds>', '浏览器 Cookie/钥匙串读取超时（1-300 秒）')
     .option('--open', '打开浏览器的豆瓣当前账号页（不能与 --profile 同用）')
+    .option('--launch', '在独立浏览器窗口中登录并保存登录态')
+    .option('--executable <path>', '登录窗口使用的 Chromium 浏览器程序路径（需配合 --launch）')
     .option('--cookie-stdin', '从非交互式标准输入读取单行 Cookie 请求头')
-    .option('--cookie-file <path>', '从 Netscape cookies.txt 文件读取 Cookie')
+    .option('--cookie-file <path>', '导入 Netscape cookies.txt、Cookie JSON 或 Playwright storage state')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler({
       command: 'login',
-      suggestion: '可尝试：douban login，或显式使用 --cookie-stdin / --cookie-file'
+      suggestion: '可尝试：douban-cli login，或显式使用 --cookie-stdin / --cookie-file'
     }, async (opts) => {
       const cookieStdin = Boolean(opts.cookieStdin);
       const cookieFileProvided = typeof opts.cookieFile === 'string';
@@ -59,6 +62,8 @@ export function registerAuthCommands(program: Command): void {
         opts.browser !== undefined
         || opts.profile !== undefined
         || opts.open
+        || opts.launch
+        || opts.executable !== undefined
         || opts.cookieTimeout !== undefined
       )) {
         throw new CliArgumentError('手动 Cookie 导入不能与 --browser、--profile、--open 或 --cookie-timeout 同时使用');
@@ -81,12 +86,13 @@ export function registerAuthCommands(program: Command): void {
         if (profile && !browser) throw new Error('--profile 必须与 --browser 一起使用');
         if (profile && browser === 'safari') throw new Error('Safari 不支持 --profile');
 
-        session = await loginWithBrowser({
-          browser,
-          profile,
-          cookieTimeoutMs: cookieTimeoutSeconds * 1000,
-          open: Boolean(opts.open)
-        });
+        if (opts.launch || browser === 'webkit') {
+          if (profile || opts.open) throw new CliArgumentError('--launch 不能与 --profile 或 --open 同用');
+          session = await loginInBrowser(browser ?? 'chromium', opts.executable, opts.cookieTimeout === undefined ? 180 : cookieTimeoutSeconds);
+        } else {
+          if (opts.executable) throw new CliArgumentError('--executable 需配合 --launch');
+          session = await loginWithBrowser({ browser: browser as BrowserName | undefined, profile, cookieTimeoutMs: cookieTimeoutSeconds * 1000, open: Boolean(opts.open) });
+        }
       }
 
       if (opts.json) {
@@ -107,7 +113,7 @@ export function registerAuthCommands(program: Command): void {
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler({
       command: 'whoami',
-      suggestion: '可尝试：douban login 后再运行 douban whoami'
+      suggestion: '可尝试：douban-cli login 后再运行 douban-cli whoami'
     }, async (opts) => {
       const auth = await withSpinner('正在检查登录状态...', () => ensureAuth(), !opts.json);
       const profile = {
@@ -139,7 +145,7 @@ export function registerAuthCommands(program: Command): void {
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler({
       command: 'logout',
-      suggestion: '可尝试：douban logout'
+      suggestion: '可尝试：douban-cli logout'
     }, async (opts) => {
       await withSpinner('正在清理本地登录态...', async () => {
         clearAuthCache();

@@ -112,7 +112,10 @@ describe('authenticated account reads', () => {
         comment: 'Great'
       }],
       partial: false,
-      warnings: []
+      warnings: [],
+      limited: false,
+      total: 1,
+      nextStart: null
     });
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Cookie')).toBe('dbcl2=secret');
   });

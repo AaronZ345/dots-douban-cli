@@ -258,7 +258,7 @@ function isCkRelatedError(error: unknown): boolean {
   return CK_ERROR_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
-async function withCkRetry<T>(
+async function withResolvedCk<T>(
   cookies: string,
   existingCk: string | undefined,
   subjectId: string | undefined,
@@ -273,11 +273,7 @@ async function withCkRetry<T>(
     if (!isCkRelatedError(error)) throw error;
 
     clearCachedCk(cookies);
-    const refreshedCk = await resolveCk(cookies, undefined, subjectId, {
-      forceRefresh: true,
-      subjectBaseUrl
-    });
-    return action(refreshedCk);
+    throw error;
   }
 }
 
@@ -372,7 +368,7 @@ export async function updateSubjectInterest(
     throw new Error('评分必须是 1-5 的整数');
   }
 
-  await withCkRetry(cookies, existingCk, id, async (ck) => {
+  await withResolvedCk(cookies, existingCk, id, async (ck) => {
     await postForm(
       subjectEndpoint(descriptor, id, `/j/subject/${id}/interest`, decodeRZeroMutation),
       {
@@ -394,7 +390,7 @@ export async function removeSubjectInterest(
 ): Promise<void> {
   const id = validateSubjectId(subjectId);
 
-  await withCkRetry(cookies, existingCk, id, async (ck) => {
+  await withResolvedCk(cookies, existingCk, id, async (ck) => {
     try {
       await postForm(
         subjectEndpoint(descriptor, id, `/j/subject/${id}/removeinterest`, decodeExplicitMutation),
@@ -426,7 +422,7 @@ export async function createReview(
   if (!title.trim()) throw new Error('长评标题不能为空');
   if (!content.trim()) throw new Error('长评内容不能为空');
 
-  return withCkRetry(cookies, existingCk, id, async (ck) => {
+  return withResolvedCk(cookies, existingCk, id, async (ck) => {
     const result = await postForm(
       {
         url: `${BASE}/j/review/create`,
@@ -461,7 +457,7 @@ export async function followUser(userId: string, cookies: string, existingCk?: s
   const id = userId.trim();
   if (!id) throw new Error('用户 ID 不能为空');
 
-  await withCkRetry(cookies, existingCk, undefined, async (ck) => {
+  await withResolvedCk(cookies, existingCk, undefined, async (ck) => {
     try {
       await postForm(
         {
@@ -494,7 +490,7 @@ export async function unfollowUser(userId: string, cookies: string, existingCk?:
   const id = userId.trim();
   if (!id) throw new Error('用户 ID 不能为空');
 
-  await withCkRetry(cookies, existingCk, undefined, async (ck) => {
+  await withResolvedCk(cookies, existingCk, undefined, async (ck) => {
     try {
       await postForm(
         {

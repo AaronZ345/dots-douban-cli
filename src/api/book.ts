@@ -274,7 +274,7 @@ async function searchBookSuggestions(keyword: string, limit: number): Promise<Bo
  * Search books by keyword. Douban returns 15 subjects per page, so aggregate
  * pages until the requested limit is satisfied.
  */
-export async function searchBooks(keyword: string, start = 0, limit = 20): Promise<BookSearchItem[]> {
+export async function searchBooks(keyword: string, start = 0, limit = 20, metadata?: import('./search.js').SearchMetadata): Promise<BookSearchItem[]> {
   const query = keyword.trim();
   if (!query) return [];
   if (!Number.isInteger(start) || start < 0) throw new Error('start 必须是非负整数');
@@ -284,9 +284,12 @@ export async function searchBooks(keyword: string, start = 0, limit = 20): Promi
   const seen = new Set<string>();
   let pageStart = start;
   let firstPageError: unknown;
+  const report = metadata ?? { partial: false, warnings: [] };
+  report.source = '完整搜索';
   const maxPages = Math.min(50, Math.max(1, Math.ceil(limit / 15) + 3));
 
   for (let pageNumber = 0; pageNumber < maxPages && results.length < limit; pageNumber += 1) {
+    if (pageNumber) await new Promise((resolve) => setTimeout(resolve, 1000));
     const url = `https://search.douban.com/book/subject_search?search_text=${encodeURIComponent(query)}&cat=1001&start=${pageStart}`;
     try {
       const html = await fetchHtml(url, { Referer: 'https://www.douban.com/' });
@@ -309,18 +312,23 @@ export async function searchBooks(keyword: string, start = 0, limit = 20): Promi
     } catch (error) {
       if (results.length === 0) firstPageError = error;
       const message = error instanceof Error ? error.message : String(error);
+      report.partial = true;
+      report.warnings.push(`start=${pageStart} 搜索页失败：${message}`);
       debug('book', `${results.length > 0 ? '后续搜索页失败，保留已有结果' : '完整搜索失败，准备回退建议接口'}: ${message}`);
       break;
     }
   }
 
-  if (results.length > 0) return results.slice(0, limit);
+  if (results.length > 0 || !firstPageError) return results.slice(0, limit);
   if (start > 0) {
     if (firstPageError) throw firstPageError;
     return [];
   }
   try {
-    return await searchBookSuggestions(query, limit);
+    const items = await searchBookSuggestions(query, limit);
+    report.source = '搜索建议';
+    report.warnings.push('完整搜索不可用，返回搜索建议；结果不保证完整');
+    return items;
   } catch (suggestionError) {
     if (firstPageError) throw firstPageError;
     throw suggestionError;

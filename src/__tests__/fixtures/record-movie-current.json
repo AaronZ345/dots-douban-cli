@@ -1,0 +1,1 @@
+{"interest_status":"collect","tags":["合成标签"],"html":"<form action='/j/subject/42/interest'><input type='radio' name='interest' value='collect' checked><input name='rating' value='4'><input name='tags'><textarea name='comment'>合成短评，不对应真实用户</textarea><input name='private' type='checkbox' value='1'><input name='share-shuo' type='checkbox' checked value='1'></form>"}

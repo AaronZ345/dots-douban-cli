@@ -1,361 +1,82 @@
 import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
 import { ensureAuth } from '../auth.js';
-import { SUBJECT_ACTIONS, unmarkSubject, updateSubjectInterest } from '../api/mutations.js';
+import { editPersonalRecord, removePersonalRecord, type RecordPatch } from '../api/record.js';
+import type { SubjectActionKind } from '../api/mutations.js';
 import { withErrorHandler } from '../utils/error.js';
-import { isNumericId } from '../utils/parsing.js';
-import { withSpinner } from '../utils/spinner.js';
+import { parseKind } from './records.js';
 import { parseDelaySeconds, sleep } from '../utils/timing.js';
 
-type Interest = 'wish' | 'collect' | 'do';
-
-interface BatchItem {
-  id: string;
-  score?: number;
-  text?: string;
+type Item = { id: string; score?: number; text?: string };
+type Result = { id: string; ok: boolean; score?: number; error?: string; skipped?: boolean; verified?: boolean; dryRun?: boolean };
+function id(value: string): string {
+  if (!/^\d+$/.test(value.trim())) throw new Error('条目 ID 必须是纯数字');
+  return value.trim();
 }
-
-interface BatchResult {
-  ok: boolean;
+function lines(file: string): string[] {
+  const contents = readFileSync(file);
+  if (contents.length > 1024 * 1024) throw new Error('批量文件不能超过 1 MiB');
+  const selected = contents.toString('utf8').split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith('#'));
+  if (!selected.length) throw new Error('批量文件没有条目');
+  return selected;
 }
-
-function parseNumericId(value: string): string {
-  const id = value.trim();
-  if (!isNumericId(id)) throw new Error(`无效条目 ID: ${value}`);
-  return id;
-}
-
-function nextDelayMs(index: number, total: number, delaySeconds: number): number {
-  if (index >= total - 1) return 0;
-  if (Number.isFinite(delaySeconds)) return Math.round(delaySeconds * 1000);
-  if (total <= 1) return 0;
-  return Math.round((1 + Math.random()) * 1000);
-}
-
-function readBatchLines(filePath: string): string[] {
-  const raw = readFileSync(filePath, 'utf8');
-  const lines = raw
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith('#'));
-
-  if (lines.length === 0) {
-    throw new Error(`批量文件为空: ${filePath}`);
-  }
-
-  return lines;
-}
-
-function parseIdFile(filePath: string): BatchItem[] {
-  return readBatchLines(filePath).map((line) => {
-    const firstCell = line.split(/[\s,]/)[0] || '';
-    return { id: parseNumericId(firstCell) };
-  });
-}
-
-function parseRateFile(filePath: string): BatchItem[] {
-  return readBatchLines(filePath).map((line) => {
-    const match = line.match(/^(\d+)\s*[,\t\s]\s*([1-5])\s*$/);
-    if (!match) throw new Error(`评分文件格式错误: ${line}。应为 <id>,<score>`);
-    return { id: parseNumericId(match[1]), score: Number(match[2]) };
-  });
-}
-
-function parseCommentFile(filePath: string): BatchItem[] {
-  return readBatchLines(filePath).map((line) => {
-    const commaIndex = line.indexOf(',');
-    const tabIndex = line.indexOf('\t');
-    const splitIndex = commaIndex >= 0 && tabIndex >= 0 ? Math.min(commaIndex, tabIndex) : Math.max(commaIndex, tabIndex);
-
-    if (splitIndex <= 0) {
-      throw new Error(`评论文件格式错误: ${line}。应为 <id>,<comment> 或 <id>\t<comment>`);
+function itemsFor(command: string, file: string | undefined, input: string | undefined, text: string | undefined, score: string | undefined): Item[] {
+  if (file && (input || text || score)) throw new Error('--file 不能与单条模式参数同时使用');
+  const rows = file ? lines(file) : [input ?? ''];
+  return rows.map((row) => {
+    if (command === 'mark' || command === 'unmark') return { id: id(row.split(/[\s,]/)[0]) };
+    const split = row.search(/[,\t]/);
+    if (file && split < 1) throw new Error('批量文件格式必须为 <id>,<内容>');
+    const selectedId = id(file ? row.slice(0, split) : row);
+    const value = file ? row.slice(split + 1).trim() : command === 'rate' ? score ?? '' : text ?? '';
+    if (command === 'rate') {
+      if (!/^[1-5]$/.test(value)) throw new Error('评分必须是 1-5 的整数');
+      return { id: selectedId, score: Number(value) };
     }
-
-    const id = parseNumericId(line.slice(0, splitIndex).trim());
-    const text = line.slice(splitIndex + 1).trim();
-    if (!text) throw new Error(`ID=${id} 的评论为空`);
-    return { id, text };
+    if (!value.trim()) throw new Error('短评不能为空；清空请使用 record edit --clear-comment');
+    return { id: selectedId, text: value };
   });
 }
-
-function selectInterestFromOptions(opts: { wish?: boolean; watched?: boolean; watching?: boolean }): Interest {
-  const selected = [opts.wish, opts.watched, opts.watching].filter(Boolean).length;
-  if (selected !== 1) {
-    throw new Error('必须且只能选择 --wish、--watched、--watching 之一');
-  }
-  if (opts.wish) return 'wish';
-  if (opts.watching) return 'do';
-  return 'collect';
-}
-
-function isValidScore(value: number | undefined): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 5;
-}
-
-function rejectMixedBatchInput(filePath: string | undefined, hasInlineInput: boolean): void {
-  if (filePath && hasInlineInput) {
-    throw new Error('--file 不能与单条模式参数同时使用');
-  }
-}
-
-function finalizeBatch(results: BatchResult[], outputJson: boolean): void {
-  const okCount = results.filter((r) => r.ok).length;
-  if (!outputJson) {
-    console.log(`done: ${okCount}/${results.length}`);
-  }
-  if (okCount !== results.length) {
-    process.exitCode = 1;
-  }
-}
-
-export function registerMarkCommands(program: Command): void {
-  program
-    .command('mark [id]')
-    .helpGroup('写入操作:')
-    .description('标记电影状态（想看/看过/在看） [需登录]')
-    .option('--wish', '标记为“想看”')
-    .option('--watched', '标记为“看过”')
-    .option('--watching', '标记为“在看”')
-    .option('--file <path>', '批量模式：每行一个条目 ID')
-    .option('--delay <seconds>', '批量请求间隔（秒），默认随机 1-2 秒')
-    .option('--json', '以 JSON 输出')
-    .action(withErrorHandler({
-      command: 'mark',
-      options: '状态：--wish / --watched / --watching（三选一）',
-      suggestion: '可尝试：douban mark 1292052 --wish'
-    }, async (id: string | undefined, opts) => {
-      rejectMixedBatchInput(opts.file, Boolean(id));
-      if (!id && !opts.file) throw new Error('请提供电影 ID 或使用 --file');
-      const interest = selectInterestFromOptions(opts);
-      const delaySeconds = parseDelaySeconds(opts.delay);
-      const items = opts.file ? parseIdFile(String(opts.file)) : [{ id: parseNumericId(id || '') }];
-
-      const auth = await withSpinner('正在检查登录状态...', () => ensureAuth(), !opts.json);
-      const results: Array<{ id: string; ok: boolean; error?: string }> = [];
-
-      for (let i = 0; i < items.length; i += 1) {
-        const item = items[i];
+export function registerMarkCommands(program: Command, defaultKind: SubjectActionKind = 'movie'): void {
+  for (const name of ['mark', 'rate', 'comment', 'unmark']) {
+    const command = program.command(`${name} [id]${name === 'comment' ? ' [text]' : ''}`)
+      .helpGroup('写入操作:').description(({ mark: '标记收藏状态', rate: '评分', comment: '新增或修改短评', unmark: '取消收藏' } as Record<string, string>)[name] + '，保留其他字段并读回核验 [需登录]')
+      .option('--kind <kind>', 'movie 或 book', defaultKind).option('--file <path>', '批量文件，每行 ID 或 ID,内容')
+      .option('--delay <seconds>', '批量请求间隔，默认 1 秒', '1').option('--dry-run', '读取并预览，不提交').option('--json', '以 JSON 输出');
+    if (name === 'mark') command.option('--wish', '想看／想读').option('--watched', '看过').option('--watching', '在看').option('--read', '读过').option('--reading', '在读');
+    if (name === 'rate') command.option('--score <score>', '1-5 星');
+    command.action(withErrorHandler({ command: name }, async (...args: unknown[]) => {
+      const input = args[0] as string | undefined;
+      const text = name === 'comment' ? args[1] as string | undefined : undefined;
+      const opts = args[name === 'comment' ? 2 : 1] as Record<string, string | boolean | undefined>;
+      const kind = parseKind(String(opts.kind));
+      let status: RecordPatch['status'];
+      if (name === 'mark') {
+        const flags = [opts.wish, opts.watched, opts.watching, opts.read, opts.reading];
+        if (flags.filter(Boolean).length !== 1) throw new Error('必须且只能选择一个收藏状态');
+        status = opts.wish ? 'wish' : opts.watched || opts.read ? 'collect' : 'do';
+      }
+      const items = itemsFor(name, opts.file as string | undefined, input, text, opts.score as string | undefined);
+      const delayMs = parseDelaySeconds(String(opts.delay), 1) * 1000;
+      const auth = await ensureAuth();
+      const results: Result[] = [];
+      for (let index = 0; index < items.length; index++) {
+        if (index) await sleep(delayMs);
+        const item = items[index];
         try {
-          await withSpinner(
-            `正在标记 ${item.id}...`,
-            () => updateSubjectInterest(SUBJECT_ACTIONS.movie, item.id, { interest }, auth.cookies, auth.ck),
-            !opts.json
-          );
-          results.push({ id: item.id, ok: true });
-          if (!opts.json) console.log(`✓ ${item.id} -> ${interest}`);
+          const patch: RecordPatch = name === 'mark' ? { status } : name === 'rate' ? { rating: item.score } : { comment: item.text };
+          const result = name === 'unmark'
+            ? await removePersonalRecord(kind, item.id, auth.cookies, Boolean(opts.dryRun))
+            : await editPersonalRecord(kind, item.id, patch, auth.cookies, Boolean(opts.dryRun), 'collect');
+          results.push({ id: item.id, ok: true, ...(item.score === undefined ? {} : { score: item.score }), verified: result.verified, dryRun: result.dryRun });
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          results.push({ id: item.id, ok: false, error: message });
-          if (!opts.json) console.error(`✗ ${item.id}: ${message}`);
+          results.push({ id: item.id, ok: false, error: error instanceof Error ? error.message : String(error) });
+          results.push(...items.slice(index + 1).map((entry) => ({ id: entry.id, ok: false, skipped: true, error: '前一项失败，未执行' })));
+          process.exitCode = 1; break;
         }
-
-        const delayMs = nextDelayMs(i, items.length, delaySeconds);
-        if (delayMs > 0) await sleep(delayMs);
       }
-
-      if (opts.json) {
-        console.log(JSON.stringify(results, null, 2));
-        finalizeBatch(results, true);
-        return;
-      }
-
-      finalizeBatch(results, false);
+      if (opts.json) console.log(JSON.stringify(results, null, 2));
+      else results.forEach((result) => console.log(`${result.ok ? '✓' : '✗'} ${result.id}${result.dryRun ? '（预览）' : ''}${result.error ? ` ${result.error}` : ''}`));
     }));
-
-  program
-    .command('rate [id]')
-    .helpGroup('写入操作:')
-    .description('给电影评分（1-5） [需登录]')
-    .option('--score <score>', '单条模式评分（1-5）')
-    .option('--file <path>', '批量模式：每行 <id>,<score>')
-    .option('--delay <seconds>', '批量请求间隔（秒），默认随机 1-2 秒')
-    .option('--json', '以 JSON 输出')
-    .action(withErrorHandler({
-      command: 'rate',
-      options: '评分范围：1-5',
-      suggestion: '可尝试：douban rate 1292052 --score 5'
-    }, async (id: string | undefined, opts) => {
-      rejectMixedBatchInput(opts.file, Boolean(id || opts.score));
-      const delaySeconds = parseDelaySeconds(opts.delay);
-      const singleScore = Number(opts.score);
-
-      if (!opts.file && (!isNumericId(id || '') || !Number.isInteger(singleScore) || singleScore < 1 || singleScore > 5)) {
-        throw new Error('单条模式请使用：rate <id> --score <1-5>');
-      }
-
-      const items = opts.file
-        ? parseRateFile(String(opts.file))
-        : [{ id: parseNumericId(id || ''), score: singleScore }];
-
-      const auth = await withSpinner('正在检查登录状态...', () => ensureAuth(), !opts.json);
-      const results: Array<{ id: string; score: number; ok: boolean; error?: string }> = [];
-
-      for (let i = 0; i < items.length; i += 1) {
-        const item = items[i];
-        const rawScore = item.score;
-
-        if (!isValidScore(rawScore)) {
-          const message = `ID=${item.id} 的评分无效，应为 1-5 的整数`;
-          results.push({ id: item.id, score: Number.NaN, ok: false, error: message });
-          if (!opts.json) console.error(`✗ ${item.id}: ${message}`);
-          const delayMs = nextDelayMs(i, items.length, delaySeconds);
-          if (delayMs > 0) await sleep(delayMs);
-          continue;
-        }
-
-        const score = rawScore;
-
-        try {
-          await withSpinner(
-            `正在提交评分 ${item.id}...`,
-            () => updateSubjectInterest(
-              SUBJECT_ACTIONS.movie,
-              item.id,
-              { interest: 'collect', rating: score },
-              auth.cookies,
-              auth.ck
-            ),
-            !opts.json
-          );
-          results.push({ id: item.id, score, ok: true });
-          if (!opts.json) console.log(`✓ ${item.id} -> score ${score}`);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          results.push({ id: item.id, score, ok: false, error: message });
-          if (!opts.json) console.error(`✗ ${item.id}: ${message}`);
-        }
-
-        const delayMs = nextDelayMs(i, items.length, delaySeconds);
-        if (delayMs > 0) await sleep(delayMs);
-      }
-
-      if (opts.json) {
-        console.log(JSON.stringify(results, null, 2));
-        finalizeBatch(results, true);
-        return;
-      }
-
-      finalizeBatch(results, false);
-    }));
-
-  program
-    .command('comment [id] [text]')
-    .helpGroup('写入操作:')
-    .description('发布短评 [需登录]')
-    .option('--file <path>', '批量模式：每行 <id>,<comment>')
-    .option('--delay <seconds>', '批量请求间隔（秒），默认随机 1-2 秒')
-    .option('--json', '以 JSON 输出')
-    .action(withErrorHandler({
-      command: 'comment',
-      suggestion: '可尝试：douban comment 1292052 "值得重看"'
-    }, async (id: string | undefined, text: string | undefined, opts) => {
-      rejectMixedBatchInput(opts.file, Boolean(id || text));
-      const delaySeconds = parseDelaySeconds(opts.delay);
-
-      if (!opts.file && (!isNumericId(id || '') || !text || !text.trim())) {
-        throw new Error('单条模式请使用：comment <id> "短评内容"');
-      }
-
-      const items = opts.file
-        ? parseCommentFile(String(opts.file))
-        : [{ id: parseNumericId(id || ''), text: String(text).trim() }];
-
-      const auth = await withSpinner('正在检查登录状态...', () => ensureAuth(), !opts.json);
-      const results: Array<{ id: string; ok: boolean; error?: string }> = [];
-
-      for (let i = 0; i < items.length; i += 1) {
-        const item = items[i];
-        const comment = item.text?.trim() || '';
-
-        if (!comment) {
-          const message = `ID=${item.id} 的短评内容为空`;
-          results.push({ id: item.id, ok: false, error: message });
-          if (!opts.json) console.error(`✗ ${item.id}: ${message}`);
-          const delayMs = nextDelayMs(i, items.length, delaySeconds);
-          if (delayMs > 0) await sleep(delayMs);
-          continue;
-        }
-
-        try {
-          await withSpinner(
-            `正在发布短评 ${item.id}...`,
-            () => updateSubjectInterest(
-              SUBJECT_ACTIONS.movie,
-              item.id,
-              { interest: 'collect', comment },
-              auth.cookies,
-              auth.ck
-            ),
-            !opts.json
-          );
-          results.push({ id: item.id, ok: true });
-          if (!opts.json) console.log(`✓ ${item.id} -> commented`);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          results.push({ id: item.id, ok: false, error: message });
-          if (!opts.json) console.error(`✗ ${item.id}: ${message}`);
-        }
-
-        const delayMs = nextDelayMs(i, items.length, delaySeconds);
-        if (delayMs > 0) await sleep(delayMs);
-      }
-
-      if (opts.json) {
-        console.log(JSON.stringify(results, null, 2));
-        finalizeBatch(results, true);
-        return;
-      }
-
-      finalizeBatch(results, false);
-    }));
-
-  program
-    .command('unmark [id]')
-    .helpGroup('写入操作:')
-    .description('取消标记（想看/看过/在看） [需登录]')
-    .option('--file <path>', '批量模式：每行一个条目 ID')
-    .option('--delay <seconds>', '批量请求间隔（秒），默认随机 1-2 秒')
-    .option('--json', '以 JSON 输出')
-    .action(withErrorHandler({
-      command: 'unmark',
-      suggestion: '可尝试：douban unmark 1292052'
-    }, async (id: string | undefined, opts) => {
-      rejectMixedBatchInput(opts.file, Boolean(id));
-      if (!id && !opts.file) {
-        throw new Error('请提供电影 ID 或使用 --file');
-      }
-      const delaySeconds = parseDelaySeconds(opts.delay);
-      const items = opts.file ? parseIdFile(String(opts.file)) : [{ id: parseNumericId(id || '') }];
-
-      const auth = await withSpinner('正在检查登录状态...', () => ensureAuth(), !opts.json);
-      const results: Array<{ id: string; ok: boolean; error?: string }> = [];
-
-      for (let i = 0; i < items.length; i += 1) {
-        const item = items[i];
-        try {
-          await withSpinner(
-            `正在取消标记 ${item.id}...`,
-            () => unmarkSubject(item.id, auth.cookies, auth.ck),
-            !opts.json
-          );
-          results.push({ id: item.id, ok: true });
-          if (!opts.json) console.log(`✓ ${item.id} -> unmarked`);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          results.push({ id: item.id, ok: false, error: message });
-          if (!opts.json) console.error(`✗ ${item.id}: ${message}`);
-        }
-
-        const delayMs = nextDelayMs(i, items.length, delaySeconds);
-        if (delayMs > 0) await sleep(delayMs);
-      }
-
-      if (opts.json) {
-        console.log(JSON.stringify(results, null, 2));
-        finalizeBatch(results, true);
-        return;
-      }
-
-      finalizeBatch(results, false);
-    }));
+  }
 }

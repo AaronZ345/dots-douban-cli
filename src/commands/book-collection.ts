@@ -266,7 +266,7 @@ export function registerBookCollectionCommands(book: Command): void {
     .action(withErrorHandler((args) => ({
       command: 'book user',
       target: `用户ID: ${String(args[0] || '未指定')}`,
-      suggestion: '可尝试：douban book user <userId> --wish'
+      suggestion: '可尝试：douban-cli book user <userId> --wish'
     }), async (userId, opts) => {
       const { status, label: statusLabel } = resolveBookCollectionStatus(opts);
       const page = parsePositiveInt(opts.page, '--page', 1);
@@ -325,7 +325,7 @@ export function registerBookCollectionCommands(book: Command): void {
     .action(withErrorHandler((args) => ({
       command: 'book export',
       target: `用户ID: ${String(args[0] || '未指定')}`,
-      suggestion: '可尝试：douban book export <userId> -o books.md'
+      suggestion: '可尝试：douban-cli book export <userId> -o books.md'
     }), async (userId, opts) => {
       const { status, label: statusLabel } = resolveBookCollectionStatus(opts);
       const limit = parseExportLimit(opts.limit);

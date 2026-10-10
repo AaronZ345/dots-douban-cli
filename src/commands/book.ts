@@ -27,7 +27,8 @@ import { withPagination } from '../utils/pagination.js';
 import { withSpinner } from '../utils/spinner.js';
 import { registerBookCollectionCommands } from './book-collection.js';
 
-function compactNumber(value: number): string {
+function compactNumber(value: number | null): string {
+  if (value === null) return '-';
   if (!Number.isFinite(value) || value < 0) return '-';
   if (value >= 10000) {
     const scaled = Math.round((value / 10000) * 10) / 10;
@@ -94,8 +95,8 @@ function registerTop250Command(book: Command, name: 'hot' | 'top250'): void {
     .action(withErrorHandler({
       command: `book ${name}`,
       suggestion: legacy
-        ? '推荐改用：douban book top250 -n 30'
-        : '可尝试：douban book top250 -n 30'
+        ? '推荐改用：douban-cli book top250 -n 30'
+        : '可尝试：douban-cli book top250 -n 30'
     }, async (opts) => {
       const start = parseNonNegativeInt(opts.start, '--start', 0);
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
@@ -128,7 +129,7 @@ export function registerBookCommands(program: Command): Command {
       command: 'book chart',
       target: `分类: ${String(args[0] || '全部')}`,
       options: `分类：${Object.keys(BOOK_CHART_CATEGORIES).join('、')}`,
-      suggestion: '可尝试：douban book chart 小说'
+      suggestion: '可尝试：douban-cli book chart 小说'
     }), async (category = '全部', opts) => {
       const limit = parsePositiveIntAtMost(opts.limit, '--limit', 20, 20);
       const items = await withSpinner(
@@ -151,7 +152,7 @@ export function registerBookCommands(program: Command): Command {
       command: 'book new',
       target: `分类: ${String(args[0] || '全部')}`,
       options: `分类：${BOOK_LATEST_CATEGORIES.join('、')}`,
-      suggestion: '可尝试：douban book new 科学新知'
+      suggestion: '可尝试：douban-cli book new 科学新知'
     }), async (category = '全部', opts) => {
       const limit = parsePositiveIntAtMost(opts.limit, '--limit', 20, 20);
       const items = await withSpinner(
@@ -173,18 +174,20 @@ export function registerBookCommands(program: Command): Command {
     .action(withErrorHandler((args) => ({
       command: 'book search',
       target: `关键词: ${String(args[0])}`,
-      suggestion: '可尝试：douban book search 三体 -n 20'
+      suggestion: '可尝试：douban-cli book search 三体 -n 20'
     }), async (keyword, opts) => {
       const start = parseNonNegativeInt(opts.start, '--start', 0);
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
+      const metadata = { partial: false, warnings: [] as string[], source: '' };
       const items = await withSpinner(
         `正在搜索书籍“${keyword}”...`,
-        () => searchBooks(keyword, start, limit),
+        () => searchBooks(keyword, start, limit, metadata),
         !opts.json
       );
 
-      if (opts.json) console.log(JSON.stringify(items, null, 2));
+      if (opts.json) console.log(JSON.stringify({ items, metadata }, null, 2));
       else renderBookList(items, `🔍 搜索书籍 · ${keyword}`, start);
+      if (metadata.partial) { metadata.warnings.forEach((warning) => console.error(warning)); process.exitCode = 2; }
     }));
 
   book
@@ -194,7 +197,7 @@ export function registerBookCommands(program: Command): Command {
     .action(withErrorHandler((args) => ({
       command: 'book info',
       target: `书籍: ${String(args[0])}`,
-      suggestion: '可尝试：douban book info 三体'
+      suggestion: '可尝试：douban-cli book info 三体'
     }), async (query, opts) => {
       const id = await resolveBookId(query, Boolean(opts.json));
       const detail = await withSpinner(
@@ -239,7 +242,7 @@ export function registerBookCommands(program: Command): Command {
     .action(withErrorHandler((args) => ({
       command: 'book rating',
       target: `书籍: ${String(args[0])}`,
-      suggestion: '可尝试：douban book rating 三体'
+      suggestion: '可尝试：douban-cli book rating 三体'
     }), async (query, opts) => {
       const id = await resolveBookId(query, Boolean(opts.json));
       const stats = await withSpinner(
@@ -247,6 +250,7 @@ export function registerBookCommands(program: Command): Command {
         () => getBookRatingStats(id),
         !opts.json
       );
+      if (stats.partial) { stats.warnings.forEach((warning) => console.error(warning)); process.exitCode = 2; }
 
       if (opts.json) {
         console.log(JSON.stringify(stats, null, 2));
@@ -255,10 +259,10 @@ export function registerBookCommands(program: Command): Command {
 
       console.log(`\n⭐ 评分分布 (${stats.value}分，${compactNumber(stats.count)}人评价)\n`);
       const labels = ['5星', '4星', '3星', '2星', '1星'];
-      const maxPercent = Math.max(...stats.stars, 0);
+      const maxPercent = Math.max(...stats.stars.filter((value): value is number => value !== null), 0);
       stats.stars.slice().reverse().forEach((percent, index) => {
-        const barLength = maxPercent > 0 ? Math.round((percent / maxPercent) * 30) : 0;
-        console.log(`${labels[index]} ${'█'.repeat(barLength)} ${percent}%`);
+        const barLength = percent !== null && maxPercent > 0 ? Math.round((percent / maxPercent) * 30) : 0;
+        console.log(`${labels[index]} ${'█'.repeat(barLength)} ${percent === null ? '未知' : `${percent}%`}`);
       });
       console.log(`\n想读: ${compactNumber(stats.wish_count)}`);
       console.log(`在读: ${compactNumber(stats.doing_count)}`);
@@ -274,7 +278,7 @@ export function registerBookCommands(program: Command): Command {
     .action(withErrorHandler((args) => ({
       command: 'book comments',
       target: `书籍: ${String(args[0])}`,
-      suggestion: '可尝试：douban book comments 三体'
+      suggestion: '可尝试：douban-cli book comments 三体'
     }), async (query, opts) => {
       const id = await resolveBookId(query, Boolean(opts.json));
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
@@ -322,7 +326,7 @@ export function registerBookCommands(program: Command): Command {
     .action(withErrorHandler((args) => ({
       command: 'book reviews',
       target: `书籍: ${String(args[0])}`,
-      suggestion: '可尝试：douban book reviews 三体 -n 5'
+      suggestion: '可尝试：douban-cli book reviews 三体 -n 5'
     }), async (query, opts) => {
       const id = await resolveBookId(query, Boolean(opts.json));
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
@@ -364,7 +368,7 @@ export function registerBookCommands(program: Command): Command {
     .action(withErrorHandler((args) => ({
       command: 'book notes',
       target: `书籍: ${String(args[0])}`,
-      suggestion: '可尝试：douban book notes 三体 -n 5'
+      suggestion: '可尝试：douban-cli book notes 三体 -n 5'
     }), async (query, opts) => {
       const id = await resolveBookId(query, Boolean(opts.json));
       const limit = parsePositiveInt(opts.limit, '--limit', 20);

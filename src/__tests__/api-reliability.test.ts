@@ -190,7 +190,7 @@ describe('partial rating and collection data', () => {
     }));
 
     const stats = await getSubjectRatingStats('movie', '123');
-    expect(stats).toMatchObject({ value: 9.1, count: 100, stars: [0, 0, 0, 0, 0] });
+    expect(stats).toMatchObject({ value: 9.1, count: 100, stars: [null, null, null, null, null], wish_count: null, partial: true });
   });
 
   it('parses movie collection totals and resumes inside an upstream page', async () => {

@@ -17,7 +17,6 @@ import { Command } from 'commander';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let tempHome = '';
-let originalHome: string | undefined;
 let originalCliHome: string | undefined;
 let originalExitCode: string | number | null | undefined;
 const originalStdinIsTty = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
@@ -27,23 +26,20 @@ function authCachePath(): string {
 }
 
 function legacyAuthCachePath(): string {
-  return path.join(tempHome, '.douban-cli-auth.json');
+  return path.join(tempHome, '.douban-cli-local-auth.json');
 }
 
 beforeEach(() => {
-  originalHome = process.env.HOME;
   originalCliHome = process.env.DOUBAN_CLI_HOME;
   originalExitCode = process.exitCode;
   process.exitCode = undefined;
   tempHome = mkdtempSync(path.join(os.tmpdir(), 'douban-auth-'));
-  process.env.HOME = tempHome;
+  vi.spyOn(os, 'homedir').mockReturnValue(tempHome);
   process.env.DOUBAN_CLI_HOME = path.join(tempHome, 'storage');
   vi.resetModules();
 });
 
 afterEach(() => {
-  if (originalHome === undefined) delete process.env.HOME;
-  else process.env.HOME = originalHome;
   if (originalCliHome === undefined) delete process.env.DOUBAN_CLI_HOME;
   else process.env.DOUBAN_CLI_HOME = originalCliHome;
   process.exitCode = originalExitCode;
@@ -297,8 +293,8 @@ describe.sequential('authentication safety', () => {
     expect(cachePayload).toMatchObject({ version: 2 });
     expect(cachePayload).not.toHaveProperty('source');
     expect(cachePayload).not.toHaveProperty('updatedAt');
-    expect(lstatSync(cachePath).mode & 0o777).toBe(0o600);
-    expect(lstatSync(path.dirname(cachePath)).mode & 0o777).toBe(0o700);
+    if (process.platform !== 'win32') expect(lstatSync(cachePath).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(lstatSync(path.dirname(cachePath)).mode & 0o777).toBe(0o700);
   });
 
   it('allows a longer browser cookie helper timeout', async () => {
@@ -716,7 +712,7 @@ describe.sequential('authentication safety', () => {
     await expect(auth.detectAuthSession()).resolves.toMatchObject({ accountId: 'alice' });
   });
 
-  it('keeps using the legacy cache when migration cannot create the new path', async () => {
+  it('refuses a legacy cache when its encryption key cannot be loaded from the selected storage', async () => {
     const reader = vi.fn().mockResolvedValue({
       cookies: [{ name: 'dbcl2', value: 'legacy-secret', source: { browser: 'chrome' } }],
       warnings: []
@@ -731,7 +727,7 @@ describe.sequential('authentication safety', () => {
     writeFileSync(blockedParent, 'not a directory');
     process.env.DOUBAN_CLI_HOME = path.join(blockedParent, 'storage');
 
-    await expect(auth.detectAuthSession()).resolves.toMatchObject({ accountId: 'alice' });
+    await expect(auth.detectAuthSession()).resolves.toBeNull();
     expect(existsSync(legacyAuthCachePath())).toBe(true);
     expect(stderr.mock.calls.map((call) => String(call[0])).join('\n'))
       .toContain('迁移登录缓存失败，继续使用旧缓存');

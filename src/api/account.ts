@@ -34,6 +34,9 @@ export interface CollectionRecordResult {
   records: CollectionRecord[];
   partial: boolean;
   warnings: string[];
+  limited?: boolean;
+  total?: number;
+  nextStart?: number | null;
 }
 
 function parseMineAnchor(html: string): ProfileMatch | null {
@@ -164,6 +167,9 @@ export async function getCollectionRecords(
       comment: item.comment || undefined
     })),
     partial: page.partial,
-    warnings
+    warnings,
+    limited: !page.partial && page.nextStart !== null,
+    total: page.total,
+    nextStart: page.nextStart
   };
 }

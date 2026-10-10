@@ -176,7 +176,7 @@ export function registerMovieCommands(program: Command): void {
     .action(withErrorHandler({
       command: 'hot',
       options: `标签：${TV_TAGS.join('、')}`,
-      suggestion: '可尝试：douban hot -t 热门'
+      suggestion: '可尝试：douban-cli hot -t 热门'
     }, async (opts) => {
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
       const type = opts.tv ? 'tv' : 'movie';
@@ -208,7 +208,7 @@ export function registerMovieCommands(program: Command): void {
       command: 'tv',
       target: `标签: ${String(args[0] || '未指定')}`,
       options: '标签：美剧、日剧、韩剧、国产剧、综艺',
-      suggestion: '可尝试：douban tv 美剧'
+      suggestion: '可尝试：douban-cli tv 美剧'
     }), async (tag, opts) => {
       if (!TV_TAGS.includes(tag as (typeof TV_TAGS)[number])) {
         throw new Error(`未知剧集标签: ${tag}。可选标签：${TV_TAGS.join('、')}`);
@@ -242,7 +242,7 @@ export function registerMovieCommands(program: Command): void {
       command: 'rank',
       target: `类型: ${String(args[0] || '未指定')}`,
       options: `可用类型：${Object.keys(GENRES).join('、')}`,
-      suggestion: '可尝试：douban rank 科幻'
+      suggestion: '可尝试：douban-cli rank 科幻'
     }), async (genre, opts) => {
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
       const typeId = GENRES[genre];
@@ -279,7 +279,7 @@ export function registerMovieCommands(program: Command): void {
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler({
       command: 'top250',
-      suggestion: '可尝试：douban top250 --page 2'
+      suggestion: '可尝试：douban-cli top250 --page 2'
     }, async (opts) => {
       const page = parsePositiveInt(opts.page, '--page', 1);
       const total = 250;
@@ -344,18 +344,19 @@ export function registerMovieCommands(program: Command): void {
     .action(withErrorHandler((args) => ({
       command: 'search',
       target: `关键词: ${String(args[0] || '未指定')}`,
-      suggestion: '可尝试：douban search 沙丘'
+      suggestion: '可尝试：douban-cli search 沙丘'
     }), async (keyword, opts) => {
       const start = parseNonNegativeInt(opts.start, '--start', 0);
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
+      const metadata = { partial: false, warnings: [] as string[], source: '' };
       const items = await withSpinner(
         `正在搜索“${keyword}”...`,
-        () => searchMovies(keyword, start, limit),
+        () => searchMovies(keyword, start, limit, metadata),
         !opts.json
       );
 
       if (opts.json) {
-        console.log(JSON.stringify(items, null, 2));
+        console.log(JSON.stringify({ items, metadata }, null, 2));
       } else {
         console.log(`\n🔍 搜索: ${keyword}\n`);
         if (items.length === 0) {
@@ -371,6 +372,7 @@ export function registerMovieCommands(program: Command): void {
           { header: 'ID', value: (item) => item.id || '-' }
         ]);
       }
+      if (metadata.partial) { metadata.warnings.forEach((warning) => console.error(warning)); process.exitCode = 2; }
     }));
 
   program
@@ -381,7 +383,7 @@ export function registerMovieCommands(program: Command): void {
     .action(withErrorHandler((args) => ({
       command: 'movie',
       target: `ID: ${String(args[0] || '未指定')}`,
-      suggestion: '确认 ID 是否正确，可使用 douban search 搜索'
+      suggestion: '确认 ID 是否正确，可使用 douban-cli search 搜索'
     }), async (id, opts) => {
       let movieId = id.trim();
       if (!isNumericId(movieId)) {
@@ -437,7 +439,7 @@ export function registerMovieCommands(program: Command): void {
     .action(withErrorHandler((args) => ({
       command: 'rating',
       target: `ID: ${String(args[0] || '未指定')}`,
-      suggestion: '可尝试：douban rating 1292052'
+      suggestion: '可尝试：douban-cli rating 1292052'
     }), async (id, opts) => {
       const movieId = normalizeMovieIdInput(id);
       const stats = await withSpinner(
@@ -445,24 +447,25 @@ export function registerMovieCommands(program: Command): void {
         () => getRatingStats(movieId),
         !opts.json
       );
+      if (stats.partial) { stats.warnings.forEach((warning) => console.error(warning)); process.exitCode = 2; }
 
       if (opts.json) {
         console.log(JSON.stringify(stats, null, 2));
       } else {
-        console.log(`\n⭐ 评分分布 (${stats.value}分，${stats.count.toLocaleString()}人评价)\n`);
+        console.log(`\n⭐ 评分分布 (${stats.value ?? '-'}分，${stats.count?.toLocaleString() ?? '-'}人评价)\n`);
 
         const labels = ['5星', '4星', '3星', '2星', '1星'];
-        const maxPercent = Math.max(...stats.stars);
+        const maxPercent = Math.max(...stats.stars.filter((value): value is number => value !== null), 0);
 
         stats.stars.slice().reverse().forEach((percent, i) => {
-          const barLen = maxPercent > 0 ? Math.round((percent / maxPercent) * 30) : 0;
+          const barLen = percent !== null && maxPercent > 0 ? Math.round((percent / maxPercent) * 30) : 0;
           const bar = '█'.repeat(barLen);
-          console.log(`${labels[i]} ${bar} ${percent}%`);
+          console.log(`${labels[i]} ${bar} ${percent === null ? '未知' : `${percent}%`}`);
         });
 
         console.log('\n📊 统计');
-        console.log(`想看: ${stats.wish_count.toLocaleString()}`);
-        console.log(`看过: ${stats.done_count.toLocaleString()}`);
+        console.log(`想看: ${stats.wish_count?.toLocaleString() ?? '-'}`);
+        console.log(`看过: ${stats.done_count?.toLocaleString() ?? '-'}`);
 
         if (stats.type_ranks.length > 0) {
           console.log('\n🏆 类型排名');
@@ -481,7 +484,7 @@ export function registerMovieCommands(program: Command): void {
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler({
       command: 'coming',
-      suggestion: '可尝试：douban coming -n 30'
+      suggestion: '可尝试：douban-cli coming -n 30'
     }, async (opts) => {
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
       const items = await withSpinner(
@@ -513,7 +516,7 @@ export function registerMovieCommands(program: Command): void {
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler({
       command: 'weekly',
-      suggestion: '可尝试：douban weekly'
+      suggestion: '可尝试：douban-cli weekly'
     }, async (opts) => {
       const limit = parsePositiveInt(opts.limit, '--limit', 10);
       const items = await withSpinner(
@@ -550,7 +553,7 @@ export function registerMovieCommands(program: Command): void {
     .action(withErrorHandler((args) => ({
       command: 'reviews',
       target: `ID: ${String(args[0] || '未指定')}`,
-      suggestion: '可尝试：douban reviews 1292052 --page 2'
+      suggestion: '可尝试：douban-cli reviews 1292052 --page 2'
     }), async (movieId, opts) => {
       const id = normalizeMovieIdInput(movieId);
       const limit = parsePositiveInt(opts.limit, '--limit', 20);
@@ -622,7 +625,7 @@ export function registerMovieCommands(program: Command): void {
     .action(withErrorHandler((args) => ({
       command: 'comments',
       target: `ID: ${String(args[0] || '未指定')}`,
-      suggestion: '可尝试：douban comments 1292052'
+      suggestion: '可尝试：douban-cli comments 1292052'
     }), async (movieId, opts) => {
       const id = normalizeMovieIdInput(movieId);
       const limit = parsePositiveInt(opts.limit, '--limit', 20);

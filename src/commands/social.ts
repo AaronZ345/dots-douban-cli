@@ -132,22 +132,29 @@ export function registerSocialCommands(program: Command): void {
     .helpGroup('写入操作:')
     .description('写长评 [需登录]')
     .option('--file <path>', '从文件读取长评内容')
+    .option('--dry-run', '校验账号并预览，不发布')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler((args) => ({
       command: 'review',
       target: `电影ID: ${String(args[0] || '未指定')}`,
-      suggestion: '可尝试：douban review 1292052 "标题" "正文"'
+      suggestion: '可尝试：douban-cli review 1292052 "标题" "正文"'
     }), async (movieId, title, content, opts) => {
       if (opts.file && content) {
         throw new Error('--file 不能与 [content] 同时使用');
       }
       const body = readReviewContent(content, opts.file);
       if (!body) throw new Error('长评内容不能为空，请传 [content] 或 --file');
+      const selectedMovieId = parseMovieId(movieId);
+      if (!String(title).trim()) throw new Error('长评标题不能为空');
 
       const auth = await withSpinner('正在检查登录状态...', () => ensureAuth(), !opts.json);
+      if (opts.dryRun) {
+        console.log(JSON.stringify({ dryRun: true, accountId: auth.accountId, movieId: selectedMovieId, title: String(title), content: body }, null, 2));
+        return;
+      }
       const result = await withSpinner(
         '正在发布长评...',
-        () => createReview(parseMovieId(movieId), String(title), body, auth.cookies, auth.ck),
+        () => createReview(selectedMovieId, String(title), body, auth.cookies, auth.ck),
         !opts.json
       );
 
@@ -171,7 +178,7 @@ export function registerSocialCommands(program: Command): void {
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler({
       command: 'stats',
-      suggestion: '可尝试：douban stats --year 2026 --limit 30 --delay 2'
+      suggestion: '可尝试：douban-cli stats --year 2026 --limit 30 --delay 2'
     }, async (opts) => {
       const year = typeof opts.year === 'string'
         ? parsePositiveInt(opts.year, '--year', new Date().getFullYear())
@@ -192,7 +199,8 @@ export function registerSocialCommands(program: Command): void {
       );
 
       const stat = calcStats(result.records, year);
-      const metadata = { partial: result.partial, warnings: result.warnings };
+      const metadata = { partial: result.partial, warnings: result.warnings, limited: result.limited, total: result.total, nextStart: result.nextStart };
+      if (result.partial) process.exitCode = 2;
       reportPartialWarnings('统计数据', result.warnings);
 
       if (opts.json) {
@@ -200,7 +208,7 @@ export function registerSocialCommands(program: Command): void {
         return;
       }
 
-      console.log(`\n📊 ${me.name} 在 ${year} 年观影统计${metadata.partial ? '（结果可能不完整）' : ''}`);
+      console.log(`\n📊 ${me.name} 在 ${year} 年观影统计${metadata.partial ? '（结果可能不完整）' : metadata.limited ? '（读取量受 --limit 限制）' : ''}`);
       console.log(`总计: ${stat.total} 部`);
       console.log(`平均分: ${stat.avgScore}`);
       console.log('\n按月分布:');
@@ -219,7 +227,7 @@ export function registerSocialCommands(program: Command): void {
     .option('--delay <seconds>', '批量请求间隔（秒）', '1')
     .action(withErrorHandler({
       command: 'export',
-      suggestion: '可尝试：douban export --format csv -o records.csv'
+      suggestion: '可尝试：douban-cli export --format csv -o records.csv'
     }, async (opts) => {
       const format = parseExportFormat(opts.format);
       const limit = parsePositiveInt(opts.limit, '--limit', 1000);
@@ -254,6 +262,7 @@ export function registerSocialCommands(program: Command): void {
         const scopedWarnings = result.warnings.map((warning) => `${task.label}：${warning}`);
         warnings.push(...scopedWarnings);
         reportPartialWarnings('导出数据', scopedWarnings);
+        if (result.partial) { process.exitCode = 2; break; }
 
         if (delayMs > 0 && i < tasks.length - 1) {
           await sleep(delayMs);
@@ -268,7 +277,13 @@ export function registerSocialCommands(program: Command): void {
       const metadata = {
         count: merged.length,
         partial: [...bucket.values()].some((result) => result.partial),
-        warnings
+        warnings,
+        ...([...bucket.values()].some((result) => result.limited !== undefined) ? {
+          limited: [...bucket.values()].some((result) => result.limited),
+          groups: Object.fromEntries([...bucket.entries()].map(([status, result]) => [status, {
+            count: result.records.length, total: result.total, limited: result.limited, nextStart: result.nextStart
+          }]))
+        } : {})
       };
 
       if (format === 'json') {
@@ -280,7 +295,7 @@ export function registerSocialCommands(program: Command): void {
       if (metadata.partial) {
         console.log(`⚠️ 已写入 ${merged.length} 条记录到 ${outputPath}；结果可能不完整，请查看上方警告。`);
       } else {
-        console.log(`✅ 已导出 ${merged.length} 条记录到 ${outputPath}`);
+        console.log(`✅ 已导出 ${merged.length} 条记录到 ${outputPath}${metadata.limited ? '（达到读取上限，可调整 --limit）' : ''}`);
       }
     }));
 
@@ -288,12 +303,13 @@ export function registerSocialCommands(program: Command): void {
     .command('follow <userId>')
     .helpGroup('写入操作:')
     .description('关注用户 [需登录]')
+    .option('--dry-run', '校验账号并预览，不提交关注')
     .option('--delay <seconds>', '请求前延迟（秒）', '0')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler((args) => ({
       command: 'follow',
       target: `用户ID: ${String(args[0] || '未指定')}`,
-      suggestion: '可尝试：douban follow USER_ID'
+      suggestion: '可尝试：douban-cli follow USER_ID'
     }), async (userId, opts) => {
       const id = String(userId).trim();
       if (!id) throw new Error('用户 ID 不能为空');
@@ -301,6 +317,7 @@ export function registerSocialCommands(program: Command): void {
       const delayMs = Math.round(delaySeconds * 1000);
 
       const auth = await withSpinner('正在检查登录状态...', () => ensureAuth(), !opts.json);
+      if (opts.dryRun) { console.log(JSON.stringify({ dryRun: true, action: 'follow', accountId: auth.accountId, userId: id }, null, 2)); return; }
       if (delayMs > 0) {
         await withSpinner(`等待 ${delaySeconds} 秒后提交...`, () => sleep(delayMs), !opts.json);
       }
@@ -317,12 +334,13 @@ export function registerSocialCommands(program: Command): void {
     .command('unfollow <userId>')
     .helpGroup('写入操作:')
     .description('取消关注用户 [需登录]')
+    .option('--dry-run', '校验账号并预览，不取消关注')
     .option('--delay <seconds>', '请求前延迟（秒）', '0')
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler((args) => ({
       command: 'unfollow',
       target: `用户ID: ${String(args[0] || '未指定')}`,
-      suggestion: '可尝试：douban unfollow USER_ID'
+      suggestion: '可尝试：douban-cli unfollow USER_ID'
     }), async (userId, opts) => {
       const id = String(userId).trim();
       if (!id) throw new Error('用户 ID 不能为空');
@@ -330,6 +348,7 @@ export function registerSocialCommands(program: Command): void {
       const delayMs = Math.round(delaySeconds * 1000);
 
       const auth = await withSpinner('正在检查登录状态...', () => ensureAuth(), !opts.json);
+      if (opts.dryRun) { console.log(JSON.stringify({ dryRun: true, action: 'unfollow', accountId: auth.accountId, userId: id }, null, 2)); return; }
       if (delayMs > 0) {
         await withSpinner(`等待 ${delaySeconds} 秒后提交...`, () => sleep(delayMs), !opts.json);
       }

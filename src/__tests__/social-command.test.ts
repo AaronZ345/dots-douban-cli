@@ -202,3 +202,24 @@ describe('social commands', () => {
     expect(completion).not.toContain('✅');
   });
 });
+
+it.each(['review', 'follow', 'unfollow'])('previews %s without sending account mutations', async (command) => {
+  mocks.ensureAuth.mockResolvedValue(verifiedSession());
+  const stdout=vi.spyOn(console,'log').mockImplementation(()=>undefined);
+  const mutations=await import('../api/mutations.ts');
+  const args=command==='review'?['42','标题','正文']:['target-user'];
+  await createProgram().parseAsync(['node','douban-cli',command,...args,'--dry-run','--json']);
+  expect(JSON.parse(String(stdout.mock.calls[0][0]))).toMatchObject({dryRun:true,accountId:'alice'});
+  expect(mutations.createReview).not.toHaveBeenCalled();
+  expect(mutations.followUser).not.toHaveBeenCalled();
+  expect(mutations.unfollowUser).not.toHaveBeenCalled();
+});
+
+it('marks export limits separately from failed or partial pages', async () => {
+  mocks.ensureAuth.mockResolvedValue(verifiedSession());
+  mocks.getCollectionRecords.mockResolvedValue({ records: [], partial: false, warnings: [], limited: true, total: 20, nextStart: 2 });
+  vi.spyOn(console,'log').mockImplementation(()=>undefined);
+  await createProgram().parseAsync(['node','douban-cli','export','--limit','2','--delay','0','--output','/tmp/export.json']);
+  const payload=JSON.parse(String(mocks.secureAtomicWriteFile.mock.calls[0][1]));
+  expect(payload.metadata).toMatchObject({partial:false,limited:true,groups:{collect:{nextStart:2,total:20}}});
+});

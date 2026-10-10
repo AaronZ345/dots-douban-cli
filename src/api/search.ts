@@ -1,5 +1,8 @@
 import { cleanText, extractWindowJsonObject, fetchHtml, fetchJson, isRecord, normalizeTitle, ResponseSchemaError } from './common.js';
 import { debug } from '../utils/debug.js';
+import { sleep } from '../utils/timing.js';
+
+export interface SearchMetadata { partial: boolean; warnings: string[]; source?: string }
 
 export interface SearchItem {
   id: string;
@@ -126,17 +129,14 @@ export function parseMovieSearchPage(html: string, url = 'https://search.douban.
 /**
  * Search movies through the HTML search endpoint and aggregate its 15-item pages.
  */
-export async function searchMovies(keyword: string, start = 0, limit = 20): Promise<SearchItem[]> {
+export async function searchMovies(keyword: string, start = 0, limit = 20, metadata?: SearchMetadata): Promise<SearchItem[]> {
   const query = keyword.trim();
   if (!query) return [];
   if (!Number.isInteger(start) || start < 0) throw new Error('start 必须是非负整数');
   if (!Number.isInteger(limit) || limit <= 0) return [];
 
-  const suggestionPromise = fetchSuggestions(query).catch((error): SuggestResult => {
-    const message = error instanceof Error ? error.message : String(error);
-    debug('search', `suggest 接口失败: ${message}`);
-    return { years: new Map<string, string>(), items: [] };
-  });
+  const report = metadata ?? { partial: false, warnings: [] };
+  report.source = '完整搜索';
 
   const results: SearchItem[] = [];
   const seen = new Set<string>();
@@ -145,6 +145,7 @@ export async function searchMovies(keyword: string, start = 0, limit = 20): Prom
   const maxPages = Math.min(50, Math.max(1, Math.ceil(limit / 15) + 3));
 
   for (let pageNumber = 0; pageNumber < maxPages && results.length < limit; pageNumber += 1) {
+    if (pageNumber) await sleep(1000);
     const pageUrl = `https://search.douban.com/movie/subject_search?search_text=${encodeURIComponent(query)}&cat=1002&start=${pageStart}`;
     let page: MovieSearchPage;
     try {
@@ -156,6 +157,8 @@ export async function searchMovies(keyword: string, start = 0, limit = 20): Prom
     } catch (error) {
       if (results.length === 0) firstPageError = error;
       const message = error instanceof Error ? error.message : String(error);
+      report.partial = true;
+      report.warnings.push(`start=${pageStart} 搜索页失败：${message}`);
       debug('search', `${results.length > 0 ? '后续搜索页失败，保留已有结果' : '首个搜索页失败'}: ${message}`);
       break;
     }
@@ -175,14 +178,20 @@ export async function searchMovies(keyword: string, start = 0, limit = 20): Prom
     pageStart = nextStart;
   }
 
-  const suggestions = await suggestionPromise;
-  if (results.length === 0 && firstPageError && start === 0 && suggestions.items.length > 0) {
-    return suggestions.items.slice(0, limit);
+  if (results.length === 0 && firstPageError && start === 0) {
+    let suggestions: SuggestResult;
+    try { suggestions = await fetchSuggestions(query); } catch { throw firstPageError; }
+    if (suggestions.items.length) {
+      report.source = '搜索建议';
+      report.warnings.push('完整搜索不可用，返回搜索建议；结果不保证完整');
+      return suggestions.items.slice(0, limit);
+    }
   }
   if (results.length === 0 && firstPageError) throw firstPageError;
 
-  return results.slice(0, limit).map((item) => ({
-    ...item,
-    year: suggestions.years.get(item.id) || item.year
-  }));
+  if (results.length < limit && results.length >= maxPages * 15) {
+    report.partial = true;
+    report.warnings.push('达到搜索页数上限');
+  }
+  return results.slice(0, limit);
 }

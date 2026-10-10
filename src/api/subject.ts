@@ -30,13 +30,15 @@ export interface SubjectPaginatedResult<T> {
 }
 
 export interface SubjectRatingStats {
-  value: number;
-  count: number;
-  stars: number[];
-  wish_count: number;
-  done_count: number;
-  doing_count: number;
+  value: number | null;
+  count: number | null;
+  stars: Array<number | null>;
+  wish_count: number | null;
+  done_count: number | null;
+  doing_count: number | null;
   type_ranks: Array<{ type: string; rank: number }>;
+  partial: boolean;
+  warnings: string[];
 }
 
 function normalizeSubjectId(value: string, kind: SubjectKind): string {
@@ -232,36 +234,45 @@ export async function getSubjectRatingStats(
   const ratingData: Partial<RatingResponse> = ratingResult.status === 'fulfilled' ? ratingResult.value : {};
   const subjectData: SubjectResponse = subjectResult.status === 'fulfilled' ? subjectResult.value : {};
   const rawStats = Array.isArray(ratingData.stats) ? ratingData.stats : [];
-  const stars = new Array<number>(5).fill(0).map((_, index) => {
+  const stars = new Array<number | null>(5).fill(null).map((_, index) => {
     const value = rawStats[index];
     return typeof value === 'number' && Number.isFinite(value)
       ? Math.round(value * 1000) / 10
-      : 0;
+      : null;
   });
+
+  const warnings: string[] = [];
+  if (ratingResult.status === 'rejected') warnings.push('评分分布或收藏统计来源不可用，缺失数值为 null');
+  if (subjectResult.status === 'rejected') warnings.push('条目评分来源不可用，缺失数值为 null');
+  if (stars.some((value) => value === null) && ratingResult.status === 'fulfilled') warnings.push('评分分布字段不完整');
+  if (subjectResult.status === 'fulfilled' && (typeof subjectData.rating?.value !== 'number' || typeof subjectData.rating?.count !== 'number')) warnings.push('条目评分或评分人数缺失');
+  if (ratingResult.status === 'fulfilled' && [ratingData.wish_count, ratingData.done_count, ratingData.doing_count].some((value) => typeof value !== 'number')) warnings.push('收藏统计字段不完整');
 
   return {
     value: typeof subjectData.rating?.value === 'number' && Number.isFinite(subjectData.rating.value)
       ? subjectData.rating.value
-      : 0,
+      : null,
     count: typeof subjectData.rating?.count === 'number' && Number.isFinite(subjectData.rating.count)
       ? Math.max(0, Math.trunc(subjectData.rating.count))
-      : 0,
+      : null,
     stars,
     wish_count: typeof ratingData.wish_count === 'number' && Number.isFinite(ratingData.wish_count)
       ? Math.max(0, Math.trunc(ratingData.wish_count))
-      : 0,
+      : null,
     done_count: typeof ratingData.done_count === 'number' && Number.isFinite(ratingData.done_count)
       ? Math.max(0, Math.trunc(ratingData.done_count))
-      : 0,
+      : null,
     doing_count: typeof ratingData.doing_count === 'number' && Number.isFinite(ratingData.doing_count)
       ? Math.max(0, Math.trunc(ratingData.doing_count))
-      : 0,
+      : null,
     type_ranks: Array.isArray(ratingData.type_ranks)
       ? ratingData.type_ranks.filter(isRecord).filter((item) => (
         typeof item.type === 'string'
         && typeof item.rank === 'number'
         && Number.isFinite(item.rank)
       )) as Array<{ type: string; rank: number }>
-      : []
+      : [],
+    partial: warnings.length > 0,
+    warnings
   };
 }

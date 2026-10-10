@@ -17,7 +17,7 @@ function run(...args) {
 
 const rootHelp = run('--help');
 assert.equal(rootHelp.status, 0);
-assert.match(rootHelp.stdout, /douban - 豆瓣命令行工具 v\d+/);
+assert.match(rootHelp.stdout, /dots-douban-cli - 豆瓣命令行工具 v\d+/);
 assert.doesNotMatch(rootHelp.stdout, /vundefined/);
 assert.match(rootHelp.stdout, /电影:/);
 assert.match(rootHelp.stdout, /书籍:/);
@@ -94,7 +94,7 @@ for (const removedCommand of [
 
 const bookHelp = run('book', '--help');
 assert.equal(bookHelp.status, 0);
-assert.match(bookHelp.stdout, /Usage: douban book/);
+assert.match(bookHelp.stdout, /Usage: dots-douban-cli book/);
 assert.match(bookHelp.stdout, /top250/);
 assert.match(bookHelp.stdout, /chart/);
 assert.match(bookHelp.stdout, /comments/);
@@ -136,7 +136,7 @@ assert.equal(missingArgumentJson.stdout, '');
 const missingPayload = JSON.parse(missingArgumentJson.stderr);
 assert.equal(missingPayload.ok, false);
 assert.equal(missingPayload.error.code, 'INVALID_ARGUMENT');
-assert.equal(missingPayload.error.command, 'douban');
+assert.equal(missingPayload.error.command, 'douban-cli');
 
 const invalidEnumJson = run('rank', '不存在', '--json');
 assert.equal(invalidEnumJson.status, 1);
@@ -153,4 +153,15 @@ const unknownPayload = JSON.parse(unknownCommandJson.stderr);
 assert.equal(unknownPayload.ok, false);
 assert.equal(unknownPayload.error.code, 'UNKNOWN_COMMAND');
 
-console.log('CLI smoke tests passed');
+for (const command of ['hot','tv','rank','top250','coming','weekly','search','movie','rating','comments','reviews','user','me','config','list','login','whoami','logout','mark','unmark','rate','comment','review','stats','export','follow','unfollow','records','record']) {
+  const result = run(command, '--help');
+  assert.equal(result.status, 0, command);
+  assert.equal(result.stderr, '', command);
+}
+for (const command of ['hot','top250','chart','new','search','info','rating','comments','reviews','notes','user','export','mark','unmark','rate','comment']) {
+  assert.equal(run('book', command, '--help').status, 0, `book ${command}`);
+}
+const invalidBrowser = run('login', '--launch', '--browser', 'invalid', '--json');
+assert.equal(invalidBrowser.status, 1);
+assert.equal(JSON.parse(invalidBrowser.stderr).error.code, 'INVALID_ARGUMENT');
+console.log('CLI smoke tests passed: original commands and added record/book actions');

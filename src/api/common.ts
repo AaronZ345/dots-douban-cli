@@ -1,4 +1,11 @@
 import { HttpClient, isChallengeHtml, isLoginHtml, type HtmlPage } from './http/client.js';
+import { EnvHttpProxyAgent, setGlobalDispatcher } from 'undici';
+import { readFetch } from './browser-transport.js';
+
+// Respect existing process proxy settings without changing system networking.
+if (process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy) {
+  setGlobalDispatcher(new EnvHttpProxyAgent());
+}
 
 export { HttpClient, type HtmlPage } from './http/client.js';
 export { HttpRequestError, ResponseSchemaError } from './http/errors.js';
@@ -10,6 +17,7 @@ export const FETCH_TIMEOUT_MS = 30000;
 
 const httpClient = new HttpClient({
   defaultHeaders: { 'User-Agent': UA },
+  fetchImpl: readFetch,
   timeoutMs: FETCH_TIMEOUT_MS
 });
 

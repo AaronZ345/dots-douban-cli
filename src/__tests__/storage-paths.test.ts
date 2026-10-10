@@ -44,8 +44,8 @@ describe('CLI storage paths', () => {
       env: {}
     });
 
-    expect(paths.authCachePath).toBe('/Users/alice/Library/Application Support/douban-cli/auth.json');
-    expect(paths.configPath).toBe('/Users/alice/Library/Application Support/douban-cli/config.json');
+    expect(paths.authCachePath).toBe('/Users/alice/Library/Application Support/douban-cli-local/auth.json');
+    expect(paths.configPath).toBe('/Users/alice/Library/Application Support/douban-cli-local/config.json');
   });
 
   it('uses absolute XDG directories on Linux', () => {
@@ -58,8 +58,8 @@ describe('CLI storage paths', () => {
       }
     });
 
-    expect(paths.authCachePath).toBe('/data/alice/state/douban-cli/auth.json');
-    expect(paths.configPath).toBe('/data/alice/config/douban-cli/config.json');
+    expect(paths.authCachePath).toBe('/data/alice/state/douban-cli-local/auth.json');
+    expect(paths.configPath).toBe('/data/alice/config/douban-cli-local/config.json');
   });
 
   it('ignores relative XDG values and uses standard Linux fallbacks', () => {
@@ -72,8 +72,8 @@ describe('CLI storage paths', () => {
       }
     });
 
-    expect(paths.authCachePath).toBe('/home/alice/.local/state/douban-cli/auth.json');
-    expect(paths.configPath).toBe('/home/alice/.config/douban-cli/config.json');
+    expect(paths.authCachePath).toBe('/home/alice/.local/state/douban-cli-local/auth.json');
+    expect(paths.configPath).toBe('/home/alice/.config/douban-cli-local/config.json');
   });
 
   it('separates local auth state from roaming config on Windows', () => {
@@ -86,7 +86,7 @@ describe('CLI storage paths', () => {
       }
     });
 
-    expect(paths.authCachePath).toBe('D:\\Local\\douban-cli\\auth.json');
-    expect(paths.configPath).toBe('D:\\Roaming\\douban-cli\\config.json');
+    expect(paths.authCachePath).toBe('D:\\Local\\douban-cli-local\\auth.json');
+    expect(paths.configPath).toBe('D:\\Roaming\\douban-cli-local\\config.json');
   });
 });

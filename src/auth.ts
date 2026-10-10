@@ -1,6 +1,5 @@
-import { createCipheriv, createDecipheriv, createHash, pbkdf2Sync, randomBytes } from 'node:crypto';
-import { chmodSync, lstatSync, readFileSync, unlinkSync } from 'node:fs';
-import os from 'node:os';
+import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from 'node:crypto';
+import { chmodSync, closeSync, constants, lstatSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import readline from 'node:readline/promises';
@@ -48,12 +47,12 @@ const MAX_COOKIE_TIMEOUT_MS = 300_000;
 const MAX_COOKIE_STDIN_BYTES = 16 * 1024;
 const MAX_COOKIE_FILE_BYTES = 128 * 1024;
 
-export type BrowserName = 'chrome' | 'arc' | 'edge' | 'firefox' | 'safari';
+export type BrowserName = 'chrome' | 'chromium' | 'brave' | 'arc' | 'edge' | 'firefox' | 'safari';
 type CookieBackendName = 'chrome' | 'edge' | 'firefox' | 'safari';
 
 export interface BrowserCookieTarget {
-  backend: Exclude<BrowserName, 'arc'>;
-  chromiumBrowser?: 'chrome' | 'arc';
+  backend: CookieBackendName;
+  chromiumBrowser?: 'chrome' | 'arc' | 'brave' | 'chromium';
 }
 
 export interface LoginOptions {
@@ -262,13 +261,30 @@ function parseAuthSession(raw: unknown): AuthSession | null {
   };
 }
 
-function machineSecret(): Buffer {
-  const payload = `${os.userInfo().username}|${os.hostname()}|${os.homedir()}|douban-cli`;
-  return createHash('sha256').update(payload).digest();
+class AuthCacheKeyError extends Error {}
+
+function machineSecret(create: boolean): Buffer {
+  const directory = path.dirname(resolveCliStoragePaths().authCachePath);
+  const keyPath = path.join(directory, 'cache.key');
+  if (create) {
+    ensurePrivateDirectory(directory);
+    try {
+      const fd = openSync(keyPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+      try { writeFileSync(fd, randomBytes(32)); } finally { closeSync(fd); }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+  }
+  let stat;
+  try { stat = lstatSync(keyPath); } catch { throw new AuthCacheKeyError('无法读取本地登录缓存密钥，已保留缓存文件'); }
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== 32 || (process.platform !== 'win32' && (stat.mode & 0o077))) {
+    throw new AuthCacheKeyError('本地登录缓存密钥文件无效或权限不安全');
+  }
+  return readFileSync(keyPath);
 }
 
-function deriveCacheKey(salt: Buffer): Buffer {
-  const secret = machineSecret();
+function deriveCacheKey(salt: Buffer, create = false): Buffer {
+  const secret = machineSecret(create);
   try {
     return pbkdf2Sync(secret, salt, 120000, 32, 'sha256');
   } finally {
@@ -279,7 +295,7 @@ function deriveCacheKey(salt: Buffer): Buffer {
 function encryptCache(auth: AuthSession): EncryptedAuthCache {
   const salt = randomBytes(16);
   const iv = randomBytes(12);
-  const key = deriveCacheKey(salt);
+  const key = deriveCacheKey(salt, true);
   const plaintext = Buffer.from(JSON.stringify(auth), 'utf8');
   try {
     const cipher = createCipheriv('aes-256-gcm', key, iv);
@@ -331,6 +347,7 @@ function decodeAuthCache(contents: string): AuthSession {
     if (!parsed) throw new InvalidAuthCacheError('登录缓存格式无效');
     return decryptCache(parsed);
   } catch (error) {
+    if (error instanceof AuthCacheKeyError) throw error;
     if (error instanceof InvalidAuthCacheError) throw error;
     throw new InvalidAuthCacheError('登录缓存不是有效的 JSON', { cause: error });
   }
@@ -544,12 +561,44 @@ export async function loginFromCookieStdin(
   }
 }
 
+export function parseBrowserCookieJson(text: string): ParsedAuthCookies | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { return null; }
+  const entries = Array.isArray(parsed) ? parsed : asObject(parsed)?.cookies;
+  if (!Array.isArray(entries)) return null;
+  const values = new Map<string, Set<string>>();
+  for (const entry of entries) {
+    const cookie = asObject(entry);
+    if (!cookie || typeof cookie.domain !== 'string' || typeof cookie.name !== 'string' || typeof cookie.value !== 'string') continue;
+    if (cookie.domain.replace(/^\./, '') !== 'douban.com' && cookie.domain !== 'www.douban.com') continue;
+    if (cookie.name !== 'dbcl2' && cookie.name !== 'ck') continue;
+    if (typeof cookie.expires === 'number' && cookie.expires > 0 && cookie.expires <= Date.now() / 1000) continue;
+    const bucket = values.get(cookie.name) ?? new Set<string>();
+    bucket.add(cookie.value);
+    values.set(cookie.name, bucket);
+  }
+  if ([...values.values()].some((bucket) => bucket.size !== 1)) return null;
+  return parseCookieHeader([...values].map(([name, bucket]) => `${name}=${[...bucket][0]}`).join('; '));
+}
+
+export async function loginFromSessionCookies(
+  cookies: Array<{ name: string; value: string; domain: string; expires?: number }>,
+  source: string
+): Promise<VerifiedAuthSession> {
+  const parsed = parseBrowserCookieJson(JSON.stringify(cookies));
+  if (!parsed) throw new CliArgumentError('浏览器未提供唯一、有效的豆瓣登录态');
+  const selected = await selectVerifiedSession([createSession(parsed.dbcl2, parsed.ck, source)]);
+  saveAuthCache(selected);
+  return selected;
+}
+
 export async function loginFromCookieFile(filePath: string): Promise<VerifiedAuthSession> {
   const contents = readCookieFile(filePath);
   try {
-    const parsed = parseNetscapeCookies(decodeCookieInput(contents));
+    const text = decodeCookieInput(contents);
+    const parsed = parseNetscapeCookies(text) ?? parseBrowserCookieJson(text);
     if (!parsed) {
-      throw new CliArgumentError('Cookie 文件无效或缺少有效的豆瓣 dbcl2；仅支持 Netscape cookies.txt');
+      throw new CliArgumentError('Cookie 文件无效或缺少有效的豆瓣 dbcl2；支持 Netscape cookies.txt、Cookie JSON 或 Playwright storage state');
     }
     return await verifyAndSaveManualCookies(parsed, 'Manual file');
   } finally {
@@ -572,7 +621,7 @@ interface SweetCookieOptions {
   browsers: CookieBackendName[];
   mode: 'first';
   timeoutMs: number;
-  chromiumBrowser?: 'chrome' | 'arc';
+  chromiumBrowser?: 'chrome' | 'arc' | 'brave' | 'chromium';
   chromeProfile?: string;
   edgeProfile?: string;
   firefoxProfile?: string;
@@ -610,7 +659,7 @@ function asCookieBackendName(value: unknown): CookieBackendName | undefined {
 }
 
 function browserFromStoreId(value: string | undefined): BrowserName | undefined {
-  return value === 'arc' ? 'arc' : undefined;
+  return value === 'arc' || value === 'brave' || value === 'chromium' ? value : undefined;
 }
 
 function parseSweetCookieResult(value: unknown): SweetCookieResult {
@@ -673,6 +722,8 @@ function normalizeBrowserSource(source: string): string {
 
   const mapping: Record<string, string> = {
     chrome: 'Chrome',
+    chromium: 'Chromium',
+    brave: 'Brave',
     arc: 'Arc',
     edge: 'Edge',
     firefox: 'Firefox',
@@ -709,7 +760,7 @@ function validateLoginOptions(options: LoginOptions): void {
 function profileOptions(browser: BrowserName, profile?: string): Partial<SweetCookieOptions> {
   const selected = profile?.trim();
   if (!selected) return {};
-  if (browser === 'chrome' || browser === 'arc') return { chromeProfile: selected };
+  if (['chrome', 'arc', 'chromium', 'brave'].includes(browser)) return { chromeProfile: selected };
   if (browser === 'edge') return { edgeProfile: selected };
   if (browser === 'firefox') return { firefoxProfile: selected };
   return {};
@@ -727,7 +778,7 @@ function sessionsFromCookies(
     if (cookie.name !== 'dbcl2' && cookie.name !== 'ck') continue;
 
     const browser = browserFromStoreId(cookie.source?.storeId)
-      || (cookie.source?.browser === 'chrome' && fallbackBrowser === 'arc' ? 'arc' : cookie.source?.browser)
+      || (cookie.source?.browser === 'chrome' && ['arc', 'brave', 'chromium'].includes(fallbackBrowser) ? fallbackBrowser : cookie.source?.browser)
       || fallbackBrowser;
     const profile = cookie.source?.profile?.trim() || fallbackProfile?.trim() || undefined;
     const storeId = cookie.source?.storeId?.trim() || undefined;
@@ -821,6 +872,8 @@ interface LoginLaunchCommand {
 
 const MAC_BROWSER_BUNDLE_IDS: Record<BrowserName, string> = {
   chrome: 'com.google.Chrome',
+  chromium: 'org.chromium.Chromium',
+  brave: 'com.brave.Browser',
   arc: 'company.thebrowser.Browser',
   edge: 'com.microsoft.edgemac',
   firefox: 'org.mozilla.firefox',
@@ -835,7 +888,11 @@ export function resolveBrowserCookieTarget(
     if (platform !== 'darwin') {
       throw new Error(`${normalizeBrowserSource(browser)} Cookie 提取目前仅支持 macOS；请在 Windows 或 Linux 上使用 Chrome、Edge 或 Firefox`);
     }
-    if (browser === 'arc') return { backend: 'chrome', chromiumBrowser: 'arc' };
+  }
+
+  if (browser === 'arc' || browser === 'brave' || browser === 'chromium') {
+    if (platform !== 'darwin') throw new Error('此浏览器的直接 Cookie 导入仅支持 macOS；请使用 login --launch 或 --cookie-file');
+    return { backend: 'chrome', chromiumBrowser: browser };
   }
 
   return {
@@ -853,6 +910,8 @@ export function assertInteractiveLogin(isTTY: boolean | undefined): void {
 export function browserFromSystemIdentifier(identifier: string): BrowserName | undefined {
   const normalized = identifier.trim().toLowerCase();
   if (!normalized) return undefined;
+  if (normalized.includes('chromium')) return 'chromium';
+  if (normalized.includes('brave')) return 'brave';
   if (normalized.includes('company.thebrowser') || normalized.includes('arc')) return 'arc';
   if (normalized.includes('google.chrome') || normalized.includes('chromehtml')) return 'chrome';
   if (normalized.includes('microsoft.edge') || normalized.includes('msedge')) return 'edge';
@@ -946,6 +1005,8 @@ export function resolveLoginLaunchCommand(
   if (platform === 'linux') {
     const commands: Partial<Record<BrowserName, string>> = {
       chrome: 'google-chrome',
+      chromium: 'chromium',
+      brave: 'brave-browser',
       edge: 'microsoft-edge',
       firefox: 'firefox'
     };

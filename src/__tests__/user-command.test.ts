@@ -6,14 +6,16 @@ import path from 'node:path';
 
 const apiMocks = vi.hoisted(() => ({
   getUserCollection: vi.fn(),
-  getUserCollectionPage: vi.fn()
+  getUserCollectionPage: vi.fn(),
+  loadAuthenticatedUserCollectionPage: vi.fn()
 }));
 const authMocks = vi.hoisted(() => ({
   ensureAuth: vi.fn()
 }));
 
 vi.mock('../api/collection.js', () => ({
-  getUserCollectionPage: apiMocks.getUserCollectionPage
+  getUserCollectionPage: apiMocks.getUserCollectionPage,
+  loadAuthenticatedUserCollectionPage: apiMocks.loadAuthenticatedUserCollectionPage
 }));
 vi.mock('../api/user.js', () => ({
   getUserCollection: apiMocks.getUserCollection
@@ -26,15 +28,12 @@ vi.mock('../utils/spinner.js', () => ({
 import { registerUserCommands } from '../commands/user.ts';
 
 const originalArgv = process.argv;
-const originalHome = process.env.HOME;
 const originalCliHome = process.env.DOUBAN_CLI_HOME;
 const tempDirectories: string[] = [];
 
 afterEach(() => {
   process.argv = originalArgv;
   process.exitCode = undefined;
-  if (originalHome === undefined) delete process.env.HOME;
-  else process.env.HOME = originalHome;
   if (originalCliHome === undefined) delete process.env.DOUBAN_CLI_HOME;
   else process.env.DOUBAN_CLI_HOME = originalCliHome;
   for (const directory of tempDirectories.splice(0)) {
@@ -132,7 +131,7 @@ describe('user command', () => {
   it('uses the verified session identity for me without another profile lookup', async () => {
     const tempHome = mkdtempSync(path.join(os.tmpdir(), 'douban-config-'));
     tempDirectories.push(tempHome);
-    process.env.HOME = tempHome;
+    vi.spyOn(os, 'homedir').mockReturnValue(tempHome);
     process.env.DOUBAN_CLI_HOME = path.join(tempHome, 'storage');
     authMocks.ensureAuth.mockResolvedValue({
       dbcl2: 'secret',
@@ -142,20 +141,20 @@ describe('user command', () => {
       accountName: 'Alice',
       updatedAt: '2026-08-10T00:00:00.000Z'
     });
-    apiMocks.getUserCollection.mockResolvedValue([]);
+    apiMocks.loadAuthenticatedUserCollectionPage.mockResolvedValue({ items: [], partial: false, warnings: [], nextStart: null });
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
     await createProgram().parseAsync(['node', 'douban', 'me', '--json']);
 
     expect(authMocks.ensureAuth).toHaveBeenCalledOnce();
-    expect(apiMocks.getUserCollection).toHaveBeenCalledWith('alice', 'collect', 30);
+    expect(apiMocks.loadAuthenticatedUserCollectionPage).toHaveBeenCalledWith({ kind: 'movie', userId: 'alice', status: 'collect', count: 30, pageDelayMs: 1000 }, 'dbcl2=secret');
   });
 
   it('stores config in a private DOUBAN_CLI_HOME directory', async () => {
     const tempHome = mkdtempSync(path.join(os.tmpdir(), 'douban-config-'));
     tempDirectories.push(tempHome);
     const storageDirectory = path.join(tempHome, 'storage');
-    process.env.HOME = tempHome;
+    vi.spyOn(os, 'homedir').mockReturnValue(tempHome);
     process.env.DOUBAN_CLI_HOME = storageDirectory;
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
@@ -170,8 +169,8 @@ describe('user command', () => {
 
     const configPath = path.join(storageDirectory, 'config.json');
     expect(JSON.parse(readFileSync(configPath, 'utf8'))).toEqual({ user: 'alice' });
-    expect(lstatSync(storageDirectory).mode & 0o777).toBe(0o700);
-    expect(lstatSync(configPath).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(lstatSync(storageDirectory).mode & 0o777).toBe(0o700);
+    if (process.platform !== 'win32') expect(lstatSync(configPath).mode & 0o777).toBe(0o600);
   });
 
   it('rejects an empty configured user ID', async () => {
@@ -188,9 +187,9 @@ describe('user command', () => {
     const tempHome = mkdtempSync(path.join(os.tmpdir(), 'douban-config-'));
     tempDirectories.push(tempHome);
     const storageDirectory = path.join(tempHome, 'storage');
-    const legacyPath = path.join(tempHome, '.douban-cli.json');
+    const legacyPath = path.join(tempHome, '.douban-cli-local.json');
     const configPath = path.join(storageDirectory, 'config.json');
-    process.env.HOME = tempHome;
+    vi.spyOn(os, 'homedir').mockReturnValue(tempHome);
     process.env.DOUBAN_CLI_HOME = storageDirectory;
     writeFileSync(legacyPath, '{"user":"legacy-user"}\n');
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -205,9 +204,9 @@ describe('user command', () => {
   it('falls back to a valid legacy config when migration cannot create the new path', async () => {
     const tempHome = mkdtempSync(path.join(os.tmpdir(), 'douban-config-'));
     tempDirectories.push(tempHome);
-    const legacyPath = path.join(tempHome, '.douban-cli.json');
+    const legacyPath = path.join(tempHome, '.douban-cli-local.json');
     const blockedParent = path.join(tempHome, 'blocked-parent');
-    process.env.HOME = tempHome;
+    vi.spyOn(os, 'homedir').mockReturnValue(tempHome);
     process.env.DOUBAN_CLI_HOME = path.join(blockedParent, 'storage');
     writeFileSync(legacyPath, '{"user":"legacy-user"}\n');
     writeFileSync(blockedParent, 'not a directory');
@@ -226,8 +225,8 @@ describe('user command', () => {
     const tempHome = mkdtempSync(path.join(os.tmpdir(), 'douban-config-'));
     tempDirectories.push(tempHome);
     const storageDirectory = path.join(tempHome, 'storage');
-    const legacyPath = path.join(tempHome, '.douban-cli.json');
-    process.env.HOME = tempHome;
+    const legacyPath = path.join(tempHome, '.douban-cli-local.json');
+    vi.spyOn(os, 'homedir').mockReturnValue(tempHome);
     process.env.DOUBAN_CLI_HOME = storageDirectory;
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     await createProgram().parseAsync(['node', 'douban', 'config', '--user', 'current-user', '--json']);

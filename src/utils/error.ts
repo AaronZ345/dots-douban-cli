@@ -200,7 +200,7 @@ function printCliError(error: unknown, ctx: CommandErrorContext): void {
   if (ctx.options) {
     console.error(`   可选项：${redactSensitiveArguments(ctx.options)}`);
   }
-  console.error(`   提示：${payload.error.suggestion || '运行 douban --help 查看完整用法'}`);
+  console.error(`   提示：${payload.error.suggestion || '运行 douban-cli --help 查看完整用法'}`);
 }
 
 export function withErrorHandler<T extends unknown[]>(
@@ -224,8 +224,8 @@ export function handleProgramError(error: unknown): void {
   }
 
   printCliError(error, {
-    command: 'douban',
-    suggestion: '可运行 douban --help 查看可用命令'
+    command: 'douban-cli',
+    suggestion: '可运行 douban-cli --help 查看可用命令'
   });
   process.exitCode = 1;
 }

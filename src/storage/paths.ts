@@ -54,28 +54,28 @@ export function resolveCliStoragePaths(
     authDirectory = normalizedOverride;
     configDirectory = authDirectory;
   } else if (platform === 'darwin') {
-    authDirectory = pathApi.join(homedir, 'Library', 'Application Support', 'douban-cli');
+    authDirectory = pathApi.join(homedir, 'Library', 'Application Support', 'douban-cli-local');
     configDirectory = authDirectory;
   } else if (platform === 'win32') {
     const localAppData = absoluteEnvironmentPath(env.LOCALAPPDATA, path.win32)
       ?? path.win32.join(homedir, 'AppData', 'Local');
     const appData = absoluteEnvironmentPath(env.APPDATA, path.win32)
       ?? path.win32.join(homedir, 'AppData', 'Roaming');
-    authDirectory = path.win32.join(localAppData, 'douban-cli');
-    configDirectory = path.win32.join(appData, 'douban-cli');
+    authDirectory = path.win32.join(localAppData, 'douban-cli-local');
+    configDirectory = path.win32.join(appData, 'douban-cli-local');
   } else {
     const stateHome = absoluteEnvironmentPath(env.XDG_STATE_HOME, path.posix)
       ?? path.posix.join(homedir, '.local', 'state');
     const configHome = absoluteEnvironmentPath(env.XDG_CONFIG_HOME, path.posix)
       ?? path.posix.join(homedir, '.config');
-    authDirectory = path.posix.join(stateHome, 'douban-cli');
-    configDirectory = path.posix.join(configHome, 'douban-cli');
+    authDirectory = path.posix.join(stateHome, 'douban-cli-local');
+    configDirectory = path.posix.join(configHome, 'douban-cli-local');
   }
 
   return {
     authCachePath: pathApi.join(authDirectory, 'auth.json'),
     configPath: pathApi.join(configDirectory, 'config.json'),
-    legacyAuthCachePath: pathApi.join(homedir, '.douban-cli-auth.json'),
-    legacyConfigPath: pathApi.join(homedir, '.douban-cli.json')
+    legacyAuthCachePath: pathApi.join(homedir, '.douban-cli-local-auth.json'),
+    legacyConfigPath: pathApi.join(homedir, '.douban-cli-local.json')
   };
 }

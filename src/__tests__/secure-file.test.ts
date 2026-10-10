@@ -35,7 +35,7 @@ describe('secureAtomicWriteFile', () => {
     secureAtomicWriteFile(target, 'secret\n');
 
     expect(readFileSync(target, 'utf8')).toBe('secret\n');
-    expect(lstatSync(target).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(lstatSync(target).mode & 0o777).toBe(0o600);
   });
 
   it('repairs permissive permissions when replacing a file', () => {
@@ -46,7 +46,7 @@ describe('secureAtomicWriteFile', () => {
     secureAtomicWriteFile(target, 'new');
 
     expect(readFileSync(target, 'utf8')).toBe('new');
-    expect(lstatSync(target).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(lstatSync(target).mode & 0o777).toBe(0o600);
   });
 
   it('refuses regular and dangling symbolic link targets', () => {
@@ -70,16 +70,16 @@ describe('private storage migration', () => {
     ensurePrivateDirectory(directory);
     ensurePrivateDirectory(directory);
 
-    expect(lstatSync(directory).mode & 0o777).toBe(0o700);
+    if (process.platform !== 'win32') expect(lstatSync(directory).mode & 0o777).toBe(0o700);
   });
 
-  it('does not silently tighten permissions on an existing shared directory', () => {
+  it.skipIf(process.platform === 'win32')('does not silently tighten permissions on an existing shared directory', () => {
     const directory = path.join(tempDir, 'shared');
     mkdirSync(directory, { mode: 0o755 });
     chmodSync(directory, 0o755);
 
     expect(() => ensurePrivateDirectory(directory)).toThrow('chmod 700');
-    expect(lstatSync(directory).mode & 0o777).toBe(0o755);
+    if (process.platform !== 'win32') expect(lstatSync(directory).mode & 0o777).toBe(0o755);
   });
 
   it('deletes the legacy file only after the new copy is validated', () => {
@@ -94,7 +94,7 @@ describe('private storage migration', () => {
     expect(migrated).toBe(true);
     expect(existsSync(source)).toBe(false);
     expect(readFileSync(target, 'utf8')).toBe('{"ok":true}\n');
-    expect(lstatSync(target).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(lstatSync(target).mode & 0o777).toBe(0o600);
   });
 
   it('keeps the legacy file when validation fails', () => {

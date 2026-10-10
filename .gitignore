@@ -5,3 +5,9 @@ dist/
 bun.lock
 douban-export*.json
 douban-export*.csv
+
+tmp/
+user/
+output/
+.playwright-cli/
+*.tgz

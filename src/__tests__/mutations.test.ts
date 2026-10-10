@@ -117,20 +117,15 @@ describe('mutation contracts', () => {
     expect(requestHeaders(fetchMock, 0).get('Origin')).toBe('https://www.douban.com');
   });
 
-  it('refreshes an expired ck before considering an unsupported-endpoint fallback', async () => {
+  it('stops after an expired ck instead of automatically repeating a write', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response('ck expired', { status: 404 }))
       .mockResolvedValueOnce(new Response('<input name="ck" value="fresh-ck">', { status: 200 }))
       .mockResolvedValueOnce(Response.json({ r: 0 }));
     vi.stubGlobal('fetch', fetchMock);
 
-    await followUser('alice', 'dbcl2=follow-refresh', 'stale-ck');
-
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/j/contact/follow/alice');
-    expect(String(fetchMock.mock.calls[1][0])).toBe('https://www.douban.com/');
-    expect(String(fetchMock.mock.calls[2][0])).toContain('/j/contact/follow/alice');
-    expect(requestBody(fetchMock, 2).get('ck')).toBe('fresh-ck');
+    await expect(followUser('alice', 'dbcl2=follow-refresh', 'stale-ck')).rejects.toThrow('ck expired');
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it('does not fallback after server, transport, or decoder failures', async () => {

@@ -1,9 +1,8 @@
 import path from 'node:path';
 import { chmodSync, lstatSync, readFileSync, unlinkSync } from 'node:fs';
 import { Command } from 'commander';
-import { ensureAuth } from '../auth.js';
-import { getUserCollectionPage } from '../api/collection.js';
-import { getUserCollection } from '../api/user.js';
+import { ensureAuth, type VerifiedAuthSession } from '../auth.js';
+import { getUserCollectionPage, loadAuthenticatedUserCollectionPage } from '../api/collection.js';
 import { withErrorHandler } from '../utils/error.js';
 import { pageToOffset, parsePositiveInt } from '../utils/parsing.js';
 import { withSpinner } from '../utils/spinner.js';
@@ -112,7 +111,7 @@ export function registerUserCommands(program: Command): void {
     .action(withErrorHandler((args) => ({
       command: 'user',
       target: `用户ID: ${String(args[0] || '未指定')}`,
-      suggestion: '可尝试：douban user <userId> --wish'
+      suggestion: '可尝试：douban-cli user <userId> --wish'
     }), async (userId, opts) => {
       const { status, label: statusLabel } = resolveCollectionStatus(opts);
       const limit = parsePositiveInt(opts.limit, '--limit', 15);
@@ -196,7 +195,7 @@ export function registerUserCommands(program: Command): void {
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler({
       command: 'config',
-      suggestion: '可尝试：douban config --user <id>'
+      suggestion: '可尝试：douban-cli config --user <id>'
     }, async (opts) => {
       const current = readConfig();
 
@@ -213,10 +212,10 @@ export function registerUserCommands(program: Command): void {
         console.log(`\n⚙️  配置文件: ${resolveCliStoragePaths().configPath}`);
         if (current.user) {
           console.log(`默认用户 ID: ${current.user}`);
-          console.log('可直接运行: douban me');
+          console.log('可直接运行: douban-cli me');
         } else {
           console.log('默认用户 ID: 未设置');
-          console.log('设置方式: douban config --user <用户ID>');
+          console.log('设置方式: douban-cli config --user <用户ID>');
           console.log('用户 ID 可从个人主页 URL /people/xxx/ 中获取');
         }
       }
@@ -232,19 +231,20 @@ export function registerUserCommands(program: Command): void {
     .option('--json', '以 JSON 输出')
     .action(withErrorHandler({
       command: 'me',
-      suggestion: '可先运行 douban login 或 douban config --user <id>'
+      suggestion: '可先运行 douban-cli login 或 douban-cli config --user <id>'
     }, async (opts) => {
       const { status, label: statusLabel } = resolveCollectionStatus(opts);
       const config = readConfig();
       let userId = config.user?.trim();
+      let auth: VerifiedAuthSession | undefined;
 
       if (!userId) {
         try {
-          const auth = await withSpinner('正在识别当前登录用户...', () => ensureAuth(), !opts.json);
+          auth = await withSpinner('正在识别当前登录用户...', () => ensureAuth(), !opts.json);
           userId = auth.accountId;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          throw new Error(`本地登录态无法识别当前账号：${message}。请重新运行 douban login 或配置 --user`, {
+          throw new Error(`本地登录态无法识别当前账号：${message}。请重新运行 douban-cli login 或配置 --user`, {
             cause: error
           });
         }
@@ -252,17 +252,23 @@ export function registerUserCommands(program: Command): void {
 
       const limit = parsePositiveInt(opts.limit, '--limit', 30);
       if (!userId) {
-        throw new Error('无法识别当前用户，请先运行 douban login 或 douban config --user <id>');
+        throw new Error('无法识别当前用户，请先运行 douban-cli login 或 douban-cli config --user <id>');
       }
 
-      const items = await withSpinner(
+      const result = await withSpinner(
         `正在获取我的${statusLabel}片单...`,
-        () => getUserCollection(userId, status, limit),
+        () => {
+          const options = { kind: 'movie' as const, userId, status, count: limit, pageDelayMs: 1000 };
+          return auth ? loadAuthenticatedUserCollectionPage(options, auth.cookies) : getUserCollectionPage(options);
+        },
         !opts.json
       );
+      const items = result.items;
+      result.warnings.forEach((warning) => console.error(warning));
+      if (result.partial) process.exitCode = 2;
 
       if (opts.json) {
-        console.log(JSON.stringify(items, null, 2));
+        console.log(JSON.stringify({ items, metadata: { userId, partial: result.partial, warnings: result.warnings, total: result.total, limited: result.nextStart !== null, nextStart: result.nextStart } }, null, 2));
       } else {
         console.log(`\n🙋 我的片单 (${userId}) ${statusLabel}\n`);
         items.forEach((item, i) => {

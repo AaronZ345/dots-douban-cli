@@ -1,11 +1,12 @@
 {
-  "name": "@marvae24/douban-cli",
-  "version": "0.4.0",
-  "description": "Douban CLI - browse movies, TV shows, books, reviews, and collections from the terminal | 豆瓣命令行工具",
+  "name": "dots-douban-cli",
+  "version": "0.2.0",
+  "description": "豆瓣书影、片单与个人短评管理 CLI",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "douban": "dist/index.js"
+    "dots-douban-cli": "dist/index.js",
+    "douban-cli": "dist/index.js"
   },
   "scripts": {
     "clean": "node scripts/clean.mjs",
@@ -19,7 +20,12 @@
     "test": "vitest run",
     "test:cli": "node scripts/smoke-cli.mjs",
     "verify": "npm run lint && npm run typecheck && npm run typecheck:test && npm test && npm run build && npm run test:cli",
-    "prepack": "npm run verify"
+    "prepack": "npm run verify",
+    "install:browsers": "node scripts/install-browsers.mjs",
+    "test:live": "node scripts/live-check.mjs",
+    "test:browsers": "node scripts/browser-check.mjs",
+    "test:mcp": "node scripts/mcp-check.mjs",
+    "install:skill": "node scripts/install-skill.mjs"
   },
   "keywords": [
     "douban",
@@ -37,16 +43,16 @@
     "terminal",
     "command-line"
   ],
-  "author": "Marvae",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/Marvae/douban-cli.git"
-  },
-  "homepage": "https://github.com/Marvae/douban-cli",
   "dependencies": {
+    "@modelcontextprotocol/client": "^2.3.1",
+    "@modelcontextprotocol/server": "^2.3.1",
     "@steipete/sweet-cookie": "0.4.1",
-    "commander": "^15.0.0"
+    "cheerio": "^1.2.0",
+    "commander": "^15.0.0",
+    "playwright": "^1.64.0",
+    "undici": "^7.30.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -61,9 +67,16 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "scripts/install-browsers.mjs",
+    "scripts/live-check.mjs",
+    "skills",
+    "docs",
+    "CHANGELOG.md",
+    "scripts/install-skill.mjs"
   ],
   "engines": {
     "node": ">=22.13.0"
-  }
+  },
+  "private": true
 }

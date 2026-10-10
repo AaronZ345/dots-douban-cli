@@ -1,0 +1,1 @@
+{"tags":["合成标签"],"html":"<form action='/j/subject/42/interest'><input type='radio' name='interest' value='wish'><input type='radio' name='interest' value='collect' checked><input name='rating' value='5'><input name='tags'><textarea name='comment'>合成图书短评</textarea><input name='private' type='checkbox' value='1' checked></form>"}

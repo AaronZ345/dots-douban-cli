@@ -1,0 +1,6 @@
+interface:
+  display_name: "豆瓣查询与记录管理"
+  short_description: "用本地 CLI 查询公开书影片单并按明确授权管理指定记录"
+  default_prompt: "使用 $dots-douban-cli 查询豆瓣书影或处理我明确指定的记录修改。"
+policy:
+  allow_implicit_invocation: true
