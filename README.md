@@ -2,9 +2,9 @@
 
 # douban-cli
 
-**在终端查书影、读片单，管理自己的评分和短评。**
+豆瓣命令行工具，支持电影和图书搜索、片单查询、个人评分与短评管理。
 
-也可作为本地工具，供 ChatGPT Dots 和支持 MCP 的助手调用。
+支持 ChatGPT Dots 和 MCP 客户端调用。
 
 [![CI](https://github.com/AaronZ345/douban-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/AaronZ345/douban-cli/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/AaronZ345/douban-cli)](https://github.com/AaronZ345/douban-cli/releases/latest)
@@ -15,7 +15,7 @@
 
 </div>
 
-## 能做什么
+## 功能
 
 | 功能 | 内容 |
 |---|---|
@@ -23,12 +23,12 @@
 | 图书 | 书名、作者和 ISBN 搜索，详情、榜单、新书、书评与读书笔记 |
 | 豆列 | 按 ID 或地址读取，自动翻页，按作品类型和关键词筛选 |
 | 个人记录 | 想看／在看／看过、想读／在读／读过；按日期、星级和文字筛选，导出 JSON 或 CSV |
-| 记录编辑 | 修改短评、评分、状态、标签和可见性；预览改动，提交后读回核对 |
+| 记录编辑 | 修改短评、评分、状态、标签和可见性；支持预览，提交后读取记录核对 |
 | 助手接入 | Agent Skill、6 个 MCP 工具，以及本地诊断命令 |
 
 ## 安装
 
-需要 **Node.js 22.13 或更新版本**。安装已构建的发行包：
+需要 Node.js 22.13 或更新版本。
 
 ```bash
 npm install -g https://github.com/AaronZ345/douban-cli/releases/download/v0.2.1/douban-cli-0.2.1.tgz
@@ -46,7 +46,7 @@ npm run build
 npm link --ignore-scripts
 ```
 
-使用已安装的 Chrome 或 Edge 时，不必下载额外浏览器。需要 Playwright 的 Chromium、Firefox、WebKit 运行时，可以在源码目录执行：
+Chrome 和 Edge 使用本机已安装的浏览器。在源码目录安装 Playwright 的 Chromium、Firefox、WebKit 运行时：
 
 ```bash
 npm run install:browsers
@@ -56,7 +56,7 @@ npm run install:browsers
 
 ## 常用命令
 
-### 查电影和书
+### 电影与图书
 
 ```bash
 douban-cli search 沙丘 --limit 10 --json
@@ -71,7 +71,7 @@ douban-cli book chart 小说
 douban-cli book new 科学新知
 ```
 
-### 读片单和书单
+### 片单与书单
 
 ```bash
 douban-cli list 240962 --limit 30 --json
@@ -79,9 +79,9 @@ douban-cli list https://www.douban.com/doulist/240962/ --kind movie --json
 douban-cli records --user USER_ID --kind book --status collect --limit 30 --json
 ```
 
-`list --all` 默认最多读取 10000 条。日期、星级和关键词筛选作用于已读取的数据；需要更多结果时，调整 `--limit` 或使用返回的续读位置。
+`list --all` 默认最多读取 10000 条。日期、星级和关键词筛选只处理已读取的数据。增加 `--limit` 或使用返回的分页位置可继续读取。
 
-### 登录并编辑记录
+### 登录与记录编辑
 
 ```bash
 douban-cli login --launch --browser chromium
@@ -89,15 +89,15 @@ douban-cli record get 1292052 --kind movie --json
 douban-cli record edit 1292052 --comment "短评内容" --dry-run --json
 ```
 
-在打开的窗口中自行登录。确认预览后，移除 `--dry-run` 才会提交。图书使用 `--kind book`；`--clear-comment`、`--clear-rating`、`--clear-tags` 分别清空对应字段。
+在浏览器窗口中登录。`--dry-run` 仅预览改动，检查预览后移除该参数提交。图书使用 `--kind book`；`--clear-comment`、`--clear-rating`、`--clear-tags` 分别清空对应字段。
 
-未指定的字段会保留。提交前再次读取原值，发现变化就停止；提交后核对状态、评分、短评、标签和可见性。写入失败不自动重试，批量操作失败后，剩余条目标记为 `skipped`。
+未指定的字段保留原值。提交前重新读取记录，记录有变化时停止提交；提交后核对状态、评分、短评、标签和可见性。写入失败不自动重试，批量操作失败后，剩余条目标记为 `skipped`。
 
 兼容 `mark`、`rate`、`comment`、`unmark`、`review`、`stats`、`export`、`follow`、`unfollow`。图书另有 `book mark`、`book rate`、`book comment`、`book unmark`。具体参数见各命令的 `--help`。
 
 ## Dots 接入
 
-**支持 ChatGPT Dots 通过已连接的电脑使用本工具。** CLI 和技能安装在这台电脑上；Dot 需要被允许访问该电脑，使用期间电脑要在线，ChatGPT 桌面应用要保持打开。[连接电脑的说明](https://learn.chatgpt.com/docs/dots/computers-and-apps)
+ChatGPT Dots 可通过已连接的电脑调用 `douban-cli`。CLI 和技能需安装在该电脑上，并授予 Dot 访问权限。使用时电脑需在线，ChatGPT 桌面应用需保持打开。[电脑连接文档](https://learn.chatgpt.com/docs/dots/computers-and-apps)
 
 在源码目录安装技能：
 
@@ -105,13 +105,13 @@ douban-cli record edit 1292052 --comment "短评内容" --dry-run --json
 npm run install:skill
 ```
 
-技能文件也随发行包提供，位于 `skills/douban-cli/SKILL.md`。可以让 Dot 读取这份说明，再调用本机命令。例如：
+发行包包含技能文件 `skills/douban-cli/SKILL.md`。Dot 读取技能后可调用本机命令，例如：
 
 > 使用这台电脑上的 douban-cli，查豆瓣科幻榜前 10 部电影，列出片名、年份、评分和 ID。
 
-> 读取我指定的片单。把获取失败的页面和因数量上限而没读到的部分说明白。
+> 使用 douban-cli 读取指定片单，并注明读取失败的页面和超过数量上限的部分。
 
-CLI 和本地技能通过电脑连接使用。MCP 则供支持 stdio 的客户端接入：
+支持 stdio 的 MCP 客户端可使用以下配置：
 
 ```json
 {
@@ -136,7 +136,7 @@ MCP 写工具默认 `dryRun=true`。公开查询不读取浏览器登录态；�
 | WebKit | 使用 Playwright WebKit；与原版 Safari 分开 |
 | Safari | macOS 登录态导入；没有原版 Safari 自动操作 |
 
-默认使用 HTTP。页面需要执行 JavaScript 时切到浏览器模式：
+默认通过 HTTP 查询。需要执行 JavaScript 的页面使用浏览器模式：
 
 ```bash
 douban-cli --transport browser --read-browser chromium top250 --json
@@ -144,12 +144,14 @@ douban-cli --transport browser --read-browser chromium top250 --json
 
 CI 在 Linux、macOS、Windows 上检查 Node 22/24，并运行 Chromium、Firefox、WebKit 的匿名页面测试。真实站点登录和写入受豆瓣页面、限流和验证码影响；各浏览器的验收范围见 [兼容性记录](docs/COMPATIBILITY.md)。
 
-## 看懂结果
+## 输出说明
 
-- `partial` / `warnings`：部分页面或来源读取失败。
-- `limited`：到了读取数量上限，仍有内容未读取。
-- `nextStart` 等游标：继续读取的位置。
-- `null`：数值未知，不用 0 代替。
+| 字段或值 | 含义 |
+|---|---|
+| `partial` / `warnings` | 部分页面或数据来源读取失败 |
+| `limited` | 已达数量上限，仍有未读取的数据 |
+| `nextStart` 等分页游标 | 下一次读取的起始位置 |
+| `null` | 数值未知，以 `null` 返回，不填 0 |
 
 登录缓存加密保存在本机独立应用目录。`doctor` 默认只检查运行时、文件类型和权限，不读取登录文件内容。测试使用公开查询或合成夹具，不操作真实账号。
 
