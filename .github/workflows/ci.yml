@@ -62,4 +62,4 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: Check /usr/bin/chromium
-        run: npm run test:browsers -- --browser chromium
+        run: npm run test:browsers -- --browser chromium --cookie-store

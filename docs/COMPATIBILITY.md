@@ -44,7 +44,7 @@ Windows 的文件权限检查不以 POSIX mode 数值证明 ACL 安全；仍检�
 | 单元测试 | 三平台路径解析、指定浏览器路由、合成 SQLite Cookie、v10/v11、域名哈希、钥匙串参数、CLI 与 MCP |
 | 本地 macOS | Chromium、Chrome、Playwright Firefox、WebKit 的启动、DOM 和记录解析 |
 | 三平台 CI | Node 22/24；Playwright Chromium、Firefox、WebKit；原版 Chrome、Edge |
-| Linux Chromium CI | Debian 容器内安装发行版 Chromium，使用 `/usr/bin/chromium` 启动并解析合成页面 |
+| Linux Chromium CI | Debian 发行版 `/usr/bin/chromium` 启动、合成页面解析、临时配置内的合成 Cookie 保存与读取 |
 
 CI 结果以对应提交的 [GitHub Actions](https://github.com/AaronZ345/douban-cli/actions/workflows/ci.yml) 为准。Brave、Arc、Vivaldi、Opera 的路径与参数已使用合成数据测试，原版程序的完整豆瓣登录和写入尚未逐项验收。
 
