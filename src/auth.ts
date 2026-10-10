@@ -12,6 +12,8 @@ import {
   secureAtomicWriteFile
 } from './storage/secure-file.js';
 import { CliArgumentError } from './utils/error.js';
+import { assertBrowserPlatform, browserEnvironment, CHROMIUM_BROWSERS, findBrowserExecutable, type CookieBrowserName } from './browser-platform.js';
+import { readChromiumCookies, resolveCookieDatabases } from './browser-cookies.js';
 
 export interface AuthSession {
   dbcl2: string;
@@ -47,7 +49,7 @@ const MAX_COOKIE_TIMEOUT_MS = 300_000;
 const MAX_COOKIE_STDIN_BYTES = 16 * 1024;
 const MAX_COOKIE_FILE_BYTES = 128 * 1024;
 
-export type BrowserName = 'chrome' | 'chromium' | 'brave' | 'arc' | 'edge' | 'firefox' | 'safari';
+export type BrowserName = CookieBrowserName;
 type CookieBackendName = 'chrome' | 'edge' | 'firefox' | 'safari';
 
 export interface BrowserCookieTarget {
@@ -725,6 +727,8 @@ function normalizeBrowserSource(source: string): string {
     chromium: 'Chromium',
     brave: 'Brave',
     arc: 'Arc',
+    vivaldi: 'Vivaldi',
+    opera: 'Opera',
     edge: 'Edge',
     firefox: 'Firefox',
     safari: 'Safari'
@@ -760,7 +764,7 @@ function validateLoginOptions(options: LoginOptions): void {
 function profileOptions(browser: BrowserName, profile?: string): Partial<SweetCookieOptions> {
   const selected = profile?.trim();
   if (!selected) return {};
-  if (['chrome', 'arc', 'chromium', 'brave'].includes(browser)) return { chromeProfile: selected };
+  if (['chrome', 'arc', 'chromium', 'brave', 'vivaldi', 'opera'].includes(browser)) return { chromeProfile: selected };
   if (browser === 'edge') return { edgeProfile: selected };
   if (browser === 'firefox') return { firefoxProfile: selected };
   return {};
@@ -778,7 +782,7 @@ function sessionsFromCookies(
     if (cookie.name !== 'dbcl2' && cookie.name !== 'ck') continue;
 
     const browser = browserFromStoreId(cookie.source?.storeId)
-      || (cookie.source?.browser === 'chrome' && ['arc', 'brave', 'chromium'].includes(fallbackBrowser) ? fallbackBrowser : cookie.source?.browser)
+      || (cookie.source?.browser === 'chrome' && CHROMIUM_BROWSERS.includes(fallbackBrowser as typeof CHROMIUM_BROWSERS[number]) ? fallbackBrowser : cookie.source?.browser)
       || fallbackBrowser;
     const profile = cookie.source?.profile?.trim() || fallbackProfile?.trim() || undefined;
     const storeId = cookie.source?.storeId?.trim() || undefined;
@@ -823,6 +827,7 @@ async function extractFromBrowsers(
   reader?: BrowserCookieReader
 ): Promise<AuthSession[]> {
   validateLoginOptions(options);
+  const platform = browserEnvironment().platform;
 
   const browsers: BrowserName[] = options.browser
     ? [options.browser]
@@ -830,28 +835,40 @@ async function extractFromBrowsers(
         'chrome',
         'edge',
         'firefox',
-        ...(process.platform === 'darwin' ? ['safari' as const] : [])
+        ...(platform === 'darwin' ? ['safari' as const] : [])
       ];
   const targets = browsers.map((browser) => ({
     browser,
-    ...resolveBrowserCookieTarget(browser, process.platform)
+    ...resolveBrowserCookieTarget(browser, platform)
   }));
   const getCookies = reader || await loadBrowserCookieReader();
   const sessions: AuthSession[] = [];
 
   for (const { browser, backend, chromiumBrowser } of targets) {
     try {
-      const result = parseSweetCookieResult(await getCookies({
-        url: 'https://www.douban.com',
-        names: ['dbcl2', 'ck'],
-        browsers: [backend],
-        mode: 'first',
-        timeoutMs: options.cookieTimeoutMs ?? DEFAULT_COOKIE_TIMEOUT_MS,
-        ...(chromiumBrowser ? { chromiumBrowser } : {}),
-        ...profileOptions(browser, options.profile)
-      }));
-      reportCookieWarnings(result, browser);
-      sessions.push(...sessionsFromCookies(result, browser, options.profile));
+      const chromiumName = CHROMIUM_BROWSERS.find(name => name === browser);
+      if (!reader && chromiumName && (platform === 'linux' || (platform === 'darwin' && ['vivaldi', 'opera'].includes(browser)))) {
+        const result = await readChromiumCookies(chromiumName, options.profile, options.cookieTimeoutMs);
+        reportCookieWarnings(result, browser);
+        sessions.push(...sessionsFromCookies(result, browser, options.profile));
+        continue;
+      }
+      const customWindowsProfile = platform === 'win32' && chromiumName && !['chrome', 'edge'].includes(browser);
+      const databases = customWindowsProfile ? resolveCookieDatabases(chromiumName, options.profile) : [];
+      if (customWindowsProfile && databases.length === 0) throw new Error('未找到指定浏览器的 Cookie 数据库；请使用 --profile 或 --launch');
+      for (const database of customWindowsProfile ? databases : [undefined]) {
+        const result = parseSweetCookieResult(await getCookies({
+          url: 'https://www.douban.com',
+          names: ['dbcl2', 'ck'],
+          browsers: [backend],
+          mode: 'first',
+          timeoutMs: options.cookieTimeoutMs ?? DEFAULT_COOKIE_TIMEOUT_MS,
+          ...(chromiumBrowser ? { chromiumBrowser } : {}),
+          ...profileOptions(browser, database?.path ?? options.profile)
+        }));
+        reportCookieWarnings(result, browser);
+        sessions.push(...sessionsFromCookies(result, browser, options.profile));
+      }
     } catch (error) {
       reportRecoverableError(`从 ${normalizeBrowserSource(browser)} 提取 Cookie 失败`, error);
     }
@@ -875,6 +892,8 @@ const MAC_BROWSER_BUNDLE_IDS: Record<BrowserName, string> = {
   chromium: 'org.chromium.Chromium',
   brave: 'com.brave.Browser',
   arc: 'company.thebrowser.Browser',
+  vivaldi: 'com.vivaldi.Vivaldi',
+  opera: 'com.operasoftware.Opera',
   edge: 'com.microsoft.edgemac',
   firefox: 'org.mozilla.firefox',
   safari: 'com.apple.Safari'
@@ -884,15 +903,9 @@ export function resolveBrowserCookieTarget(
   browser: BrowserName,
   platform: NodeJS.Platform
 ): BrowserCookieTarget {
-  if (browser === 'arc' || browser === 'safari') {
-    if (platform !== 'darwin') {
-      throw new Error(`${normalizeBrowserSource(browser)} Cookie 提取目前仅支持 macOS；请在 Windows 或 Linux 上使用 Chrome、Edge 或 Firefox`);
-    }
-  }
-
-  if (browser === 'arc' || browser === 'brave' || browser === 'chromium') {
-    if (platform !== 'darwin') throw new Error('此浏览器的直接 Cookie 导入仅支持 macOS；请使用 login --launch 或 --cookie-file');
-    return { backend: 'chrome', chromiumBrowser: browser };
+  assertBrowserPlatform(browser, platform);
+  if (browser === 'arc' || browser === 'brave' || browser === 'chromium' || browser === 'vivaldi' || browser === 'opera') {
+    return { backend: 'chrome', ...(platform === 'darwin' && browser !== 'vivaldi' && browser !== 'opera' ? { chromiumBrowser: browser } : {}) };
   }
 
   return {
@@ -912,8 +925,10 @@ export function browserFromSystemIdentifier(identifier: string): BrowserName | u
   if (!normalized) return undefined;
   if (normalized.includes('chromium')) return 'chromium';
   if (normalized.includes('brave')) return 'brave';
-  if (normalized.includes('company.thebrowser') || normalized.includes('arc')) return 'arc';
-  if (normalized.includes('google.chrome') || normalized.includes('chromehtml')) return 'chrome';
+  if (normalized.includes('vivaldi')) return 'vivaldi';
+  if (normalized.includes('opera')) return 'opera';
+  if (normalized.includes('company.thebrowser') || normalized.includes('thebrowsercompany.arc') || normalized.startsWith('arc')) return 'arc';
+  if (normalized.includes('google.chrome') || normalized.includes('google-chrome') || normalized.includes('chromehtml') || normalized === 'chrome.desktop') return 'chrome';
   if (normalized.includes('microsoft.edge') || normalized.includes('msedge')) return 'edge';
   if (normalized.includes('mozilla.firefox') || normalized.includes('firefox')) return 'firefox';
   if (normalized.includes('apple.safari') || normalized.includes('safari')) return 'safari';
@@ -1007,10 +1022,12 @@ export function resolveLoginLaunchCommand(
       chrome: 'google-chrome',
       chromium: 'chromium',
       brave: 'brave-browser',
+      vivaldi: 'vivaldi',
+      opera: 'opera',
       edge: 'microsoft-edge',
       firefox: 'firefox'
     };
-    const command = browser ? commands[browser] : undefined;
+    const command = browser && browser !== 'safari' ? findBrowserExecutable(browser, { ...browserEnvironment(), platform }) ?? commands[browser] : undefined;
     if (browser && !command) {
       throw new Error(`当前平台暂不支持自动打开 ${normalizeBrowserSource(browser)}`);
     }
@@ -1022,19 +1039,20 @@ export function resolveLoginLaunchCommand(
   if (platform === 'win32') {
     const commands: Partial<Record<BrowserName, string>> = {
       chrome: 'chrome',
+      chromium: 'chromium',
+      brave: 'brave',
+      arc: 'Arc',
+      vivaldi: 'vivaldi',
+      opera: 'opera',
       edge: 'msedge',
       firefox: 'firefox'
     };
-    const command = browser ? commands[browser] : undefined;
+    const command = browser && browser !== 'safari' ? findBrowserExecutable(browser, { ...browserEnvironment(), platform }) ?? commands[browser] : undefined;
     if (browser && !command) {
       throw new Error(`当前平台暂不支持自动打开 ${normalizeBrowserSource(browser)}`);
     }
-    return {
-      command: 'cmd',
-      args: command
-        ? ['/c', 'start', '', command, DOUBAN_ACCOUNT_URL]
-        : ['/c', 'start', '', DOUBAN_ACCOUNT_URL]
-    };
+    return command ? { command, args: [DOUBAN_ACCOUNT_URL] }
+      : { command: 'cmd', args: ['/c', 'start', '', DOUBAN_ACCOUNT_URL] };
   }
 
   throw new Error('当前平台暂不支持自动打开浏览器登录流程');

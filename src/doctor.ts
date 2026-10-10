@@ -2,6 +2,7 @@ import { existsSync, lstatSync } from 'node:fs';
 import { chromium, firefox, webkit } from 'playwright';
 import { resolveCliStoragePaths } from './storage/paths.js';
 import { browserLaunchOptions } from './browser.js';
+import { CHROMIUM_BROWSERS, findBrowserExecutable } from './browser-platform.js';
 
 export interface DoctorCheck { name: string; status: 'pass' | 'warn' | 'fail'; message: string }
 export interface DoctorReport { ok: boolean; platform: string; checks: DoctorCheck[] }
@@ -13,8 +14,12 @@ export async function doctor(options: { online?: boolean; verifyLogin?: boolean 
   for (const [name, engine] of Object.entries({ chromium, firefox, webkit })) {
     checks.push({ name: `browser.${name}`, status: existsSync(engine.executablePath()) ? 'pass' : 'warn', message: existsSync(engine.executablePath()) ? '运行时已安装；启动与站点兼容性须单独验收' : '运行时未安装，可运行 npm run install:browsers' });
   }
-  for (const name of ['chrome', 'edge', 'brave', 'arc'] as const) {
-    try { browserLaunchOptions(name); checks.push({ name: `adapter.${name}`, status: 'pass', message: '适配入口可用；不代表已完成真实浏览器验收' }); }
+  for (const name of CHROMIUM_BROWSERS) {
+    try {
+      browserLaunchOptions(name);
+      const found = findBrowserExecutable(name);
+      checks.push({ name: `adapter.${name}`, status: found ? 'pass' : 'warn', message: found ? '已定位浏览器程序；启动与站点兼容性须单独验收' : '未找到本机程序；可安装对应浏览器或指定 --executable' });
+    }
     catch { checks.push({ name: `adapter.${name}`, status: 'warn', message: '未自动定位程序；可显式指定 --executable' }); }
   }
   const paths = resolveCliStoragePaths();

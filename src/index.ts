@@ -12,7 +12,7 @@ import { registerMarkCommands } from './commands/mark.js';
 import { registerSocialCommands } from './commands/social.js';
 import { handleProgramError } from './utils/error.js';
 import { configureBrowserReads, closeReadBrowser } from './api/browser-transport.js';
-import type { LaunchBrowserName } from './browser.js';
+import { LAUNCH_BROWSERS, parseLaunchBrowser } from './browser-platform.js';
 import { registerDoctorCommand } from './commands/doctor.js';
 import { registerMcpCommand } from './commands/mcp.js';
 
@@ -27,7 +27,7 @@ program
   .version(pkg.version || '0.0.0', '-V, --version', '显示版本')
   .helpOption('-h, --help', '显示帮助')
   .option('--transport <mode>', '查询方式：http 或 browser', 'http')
-  .option('--read-browser <name>', '浏览器查询使用的浏览器', 'chromium')
+  .option('--read-browser <name>', `查询浏览器：${LAUNCH_BROWSERS.join('、')}`, 'chromium')
   .option('--read-executable <path>', '浏览器查询使用的 Chromium 程序路径')
   .option('--headed', '浏览器查询显示窗口')
   .exitOverride()
@@ -40,8 +40,7 @@ program.hook('preAction', () => {
   const opts = program.opts();
   if (!['http', 'browser'].includes(opts.transport)) throw new Error('--transport 必须为 http 或 browser');
   if (opts.transport === 'browser') {
-    if (!['chromium', 'chrome', 'edge', 'brave', 'arc', 'firefox', 'webkit'].includes(opts.readBrowser)) throw new Error('浏览器查询支持 chromium、chrome、edge、brave、arc、firefox、webkit');
-    configureBrowserReads({ browser: opts.readBrowser as LaunchBrowserName, executable: opts.readExecutable, headed: Boolean(opts.headed) });
+    configureBrowserReads({ browser: parseLaunchBrowser(opts.readBrowser), executable: opts.readExecutable, headed: Boolean(opts.headed) });
   }
 });
 

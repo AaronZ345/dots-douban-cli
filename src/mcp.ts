@@ -3,6 +3,9 @@ import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { z } from 'zod';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { LAUNCH_BROWSERS } from './browser-platform.js';
+const { version } = createRequire(import.meta.url)('../package.json') as { version: string };
 
 export type CliRunner = (entry: 'douban', args: string[]) => Promise<unknown>;
 export const runCli: CliRunner = (entry, args) => new Promise((resolve, reject) => {
@@ -32,7 +35,7 @@ export const runCli: CliRunner = (entry, args) => new Promise((resolve, reject) 
   });
 });
 
-const browsers = z.enum(['chromium','chrome','edge','brave','arc','firefox','webkit']);
+const browsers = z.enum(LAUNCH_BROWSERS);
 const kind = z.enum(['movie','book']);
 const identifier = z.string().regex(/^\d+$/);
 const limit = z.number().int().min(1).max(100).default(10);
@@ -46,7 +49,7 @@ function response(value: unknown): CallToolResult {
 }
 
 export function createMcpServer(runner: CliRunner = runCli): McpServer {
-  const server = new McpServer({name:'douban-cli',version:'0.2.1'},{capabilities:{tools:{}}});
+  const server = new McpServer({name:'douban-cli',version},{capabilities:{tools:{}}});
   let queue: Promise<unknown> = Promise.resolve();
   const serialized = (entry:'douban',args:string[]) => {
     const result=queue.then(()=>runner(entry,args));

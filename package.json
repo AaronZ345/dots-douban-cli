@@ -1,6 +1,6 @@
 {
   "name": "douban-cli",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "豆瓣书影、片单与个人短评管理 CLI",
   "type": "module",
   "main": "dist/index.js",

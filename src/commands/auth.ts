@@ -11,7 +11,8 @@ import {
 import { CliArgumentError, withErrorHandler } from '../utils/error.js';
 import { parsePositiveIntAtMost } from '../utils/parsing.js';
 import { withSpinner } from '../utils/spinner.js';
-import { loginInBrowser, type LaunchBrowserName } from '../browser.js';
+import { loginInBrowser } from '../browser.js';
+import { COOKIE_BROWSERS } from '../browser-platform.js';
 
 function toSafeSessionJson(session: AuthSession): Record<string, string | undefined> {
   return {
@@ -22,13 +23,13 @@ function toSafeSessionJson(session: AuthSession): Record<string, string | undefi
   };
 }
 
-function parseBrowserName(value: string | undefined): LaunchBrowserName | undefined {
+function parseBrowserName(value: string | undefined): BrowserName | 'webkit' | undefined {
   if (!value) return undefined;
   const normalized = value.trim().toLowerCase();
-  if (normalized === 'chrome' || normalized === 'chromium' || normalized === 'brave' || normalized === 'arc' || normalized === 'edge' || normalized === 'firefox' || normalized === 'safari' || normalized === 'webkit') {
-    return normalized;
+  if (COOKIE_BROWSERS.includes(normalized as BrowserName) || normalized === 'webkit') {
+    return normalized as BrowserName | 'webkit';
   }
-  throw new CliArgumentError('--browser 支持 chromium、chrome、edge、brave、arc、firefox、safari、webkit');
+  throw new CliArgumentError(`--browser 支持 ${COOKIE_BROWSERS.join('、')}、webkit`);
 }
 
 export function registerAuthCommands(program: Command): void {
@@ -36,7 +37,7 @@ export function registerAuthCommands(program: Command): void {
     .command('login')
     .helpGroup('收藏与账号:')
     .description('从浏览器读取，或显式导入豆瓣登录态')
-    .option('--browser <browser>', '明确从指定浏览器读取登录态（Arc 仅 macOS）')
+    .option('--browser <browser>', `指定浏览器：${COOKIE_BROWSERS.join('、')}、webkit`)
     .option('--profile <profile>', '指定浏览器配置目录（需配合 --browser）')
     .option('--cookie-timeout <seconds>', '浏览器 Cookie/钥匙串读取超时（1-300 秒）')
     .option('--open', '打开浏览器的豆瓣当前账号页（不能与 --profile 同用）')

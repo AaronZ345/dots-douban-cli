@@ -31,7 +31,7 @@
 需要 Node.js 22.13 或更新版本。
 
 ```bash
-npm install -g https://github.com/AaronZ345/douban-cli/releases/download/v0.2.1/douban-cli-0.2.1.tgz
+npm install -g https://github.com/AaronZ345/douban-cli/releases/download/v0.3.0/douban-cli-0.3.0.tgz
 douban-cli --version
 douban-cli doctor --json
 ```
@@ -128,13 +128,26 @@ MCP 写工具默认 `dryRun=true`。公开查询不读取浏览器登录态；�
 
 ## 浏览器
 
-| 浏览器 | 使用方式 |
-|---|---|
-| Chromium、Chrome、Edge | 独立登录窗口和浏览器查询；Chrome、Edge 使用本机程序 |
-| Brave、Arc | 常见程序路径或 `--executable`；直接导入登录态目前限 macOS |
-| Firefox | 原版浏览器可导入登录态；自动化使用 Playwright Firefox |
-| WebKit | 使用 Playwright WebKit；与原版 Safari 分开 |
-| Safari | macOS 登录态导入；没有原版 Safari 自动操作 |
+| 浏览器 | macOS | Linux | Windows | 使用方式 |
+|---|---|---|---|---|
+| Chromium、Chrome、Edge | 支持 | 支持 | 支持 | 本机程序、独立登录窗口、浏览器查询、登录态导入 |
+| Brave、Vivaldi、Opera | 支持 | 支持 | 支持 | 自动查找常见安装路径，也可用 `--executable` 指定程序 |
+| Arc | 支持 | 无 Linux 版 | 支持 | 独立登录窗口、浏览器查询、登录态导入 |
+| Firefox | 支持 | 支持 | 支持 | 原版浏览器登录态导入；自动化使用 Playwright Firefox |
+| WebKit | 支持 | 支持 | 支持 | Playwright WebKit |
+| Safari | 登录态导入 | 无 Linux 版 | 无 Windows 版 | 原版 Safari 自动操作未实现 |
+
+Linux Chromium 支持发行版软件包、Snap 和 Flatpak 配置目录；程序检测也搜索 `PATH`。macOS 检测系统和用户的 Applications 目录，Windows 检测用户安装、Program Files 和 x86 安装路径。
+
+登录态导入需要系统钥匙串可用且 Cookie 格式受支持。Linux 支持 GNOME Keyring 和 KWallet；Windows 的 App-Bound 加密 Cookie 无法直接导入时，使用独立登录窗口。
+
+```bash
+douban-cli login --browser chromium
+douban-cli login --launch --browser chromium
+douban-cli login --launch --browser vivaldi
+```
+
+Chromium 系浏览器的 `--profile` 可指定配置名、配置目录或 Cookie 数据库路径。自定义安装位置使用 `login --launch --executable <绝对路径>`，浏览器查询对应 `--read-executable <绝对路径>`。
 
 默认通过 HTTP 查询。需要执行 JavaScript 的页面使用浏览器模式：
 
@@ -142,7 +155,7 @@ MCP 写工具默认 `dryRun=true`。公开查询不读取浏览器登录态；�
 douban-cli --transport browser --read-browser chromium top250 --json
 ```
 
-CI 在 Linux、macOS、Windows 上检查 Node 22/24，并运行 Chromium、Firefox、WebKit 的匿名页面测试。真实站点登录和写入受豆瓣页面、限流和验证码影响；各浏览器的验收范围见 [兼容性记录](docs/COMPATIBILITY.md)。
+CI 在 Linux、macOS、Windows 上检查 Node 22/24，测试 Playwright Chromium、Firefox、WebKit，以及原版 Chrome、Edge；另在 Debian 容器中测试 `/usr/bin/chromium`。真实站点登录和写入受豆瓣页面、限流和验证码影响；已完成的测试见 [兼容性记录](docs/COMPATIBILITY.md)。
 
 ## 输出说明
 

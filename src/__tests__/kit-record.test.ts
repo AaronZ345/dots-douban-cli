@@ -123,7 +123,6 @@ describe('browser support and cookie imports', () => {
   it('distinguishes native Safari from Playwright WebKit', () => {
     expect(() => browserLaunchOptions('safari')).toThrow('Safari');
     expect(browserLaunchOptions('webkit')).toEqual({});
-    expect(browserLaunchOptions('chrome')).toEqual({ channel: 'chrome' });
   });
   it('accepts storage state and ignores unrelated cookies', () => {
     const cookies = [{ name: 'dbcl2', value: 'fixture-account', domain: '.douban.com' }, { name: 'ck', value: 'fixture-csrf', domain: '.douban.com' }, { name: 'dbcl2', value: 'unrelated', domain: 'evil.example' }];

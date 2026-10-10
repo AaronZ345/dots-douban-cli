@@ -47,3 +47,19 @@ jobs:
           PLAYWRIGHT_SKIP_BROWSER_GC: '1'
       - run: npm run build
       - run: npm run test:browsers
+      - name: Install Chrome and Edge
+        run: npx playwright install chrome msedge
+      - name: Check native Chrome and Edge
+        run: npm run test:browsers -- --browser chrome --browser edge
+  linux-chromium:
+    runs-on: ubuntu-latest
+    container: node:22-bookworm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install distribution Chromium
+        run: apt-get update && apt-get install -y --no-install-recommends chromium
+      - run: npm ci
+      - run: npm run build
+      - name: Check /usr/bin/chromium
+        run: npm run test:browsers -- --browser chromium

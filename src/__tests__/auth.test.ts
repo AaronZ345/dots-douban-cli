@@ -453,19 +453,23 @@ describe.sequential('authentication safety', () => {
     });
   });
 
-  it('limits Arc cookie extraction to macOS', async () => {
+  it('routes Chromium browsers across systems and rejects unavailable platforms', async () => {
     const auth = await import('../auth.ts');
 
     expect(auth.resolveBrowserCookieTarget('arc', 'darwin')).toEqual({
       backend: 'chrome',
       chromiumBrowser: 'arc'
     });
-    expect(() => auth.resolveBrowserCookieTarget('arc', 'win32'))
-      .toThrow('Arc Cookie 提取目前仅支持 macOS');
+    expect(auth.resolveBrowserCookieTarget('arc', 'win32')).toEqual({ backend: 'chrome' });
+    for (const platform of ['linux', 'win32'] as const) {
+      for (const browser of ['chromium', 'brave', 'vivaldi', 'opera'] as const) {
+        expect(auth.resolveBrowserCookieTarget(browser, platform)).toEqual({ backend: 'chrome' });
+      }
+    }
     expect(() => auth.resolveBrowserCookieTarget('arc', 'linux'))
-      .toThrow('Arc Cookie 提取目前仅支持 macOS');
+      .toThrow('Arc 仅支持 macOS 和 Windows');
     expect(() => auth.resolveBrowserCookieTarget('safari', 'win32'))
-      .toThrow('Safari Cookie 提取目前仅支持 macOS');
+      .toThrow('Safari 仅支持 macOS');
   });
 
   it('rejects interactive login from a pipe or CI input', async () => {
@@ -481,6 +485,10 @@ describe.sequential('authentication safety', () => {
 
     expect(auth.browserFromSystemIdentifier('company.thebrowser.browser')).toBe('arc');
     expect(auth.browserFromSystemIdentifier('com.google.Chrome')).toBe('chrome');
+    expect(auth.browserFromSystemIdentifier('google-chrome.desktop')).toBe('chrome');
+    expect(auth.browserFromSystemIdentifier('chromium_chromium.desktop')).toBe('chromium');
+    expect(auth.browserFromSystemIdentifier('vivaldi-stable.desktop')).toBe('vivaldi');
+    expect(auth.browserFromSystemIdentifier('OperaStable')).toBe('opera');
     expect(auth.browserFromSystemIdentifier('MSEdgeHTM')).toBe('edge');
     expect(auth.browserFromSystemIdentifier('FirefoxURL-308046B0AF4A39CB')).toBe('firefox');
     expect(auth.browserFromSystemIdentifier('com.apple.Safari')).toBe('safari');

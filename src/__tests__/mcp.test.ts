@@ -6,6 +6,11 @@ const cleanups:Array<()=>Promise<void>>=[];
 afterEach(async()=>{for(const close of cleanups.splice(0))await close();});
 async function connect(runner:CliRunner){const server=createMcpServer(runner);const client=new Client({name:'anonymous-contract-test',version:'1.0'});const [left,right]=InMemoryTransport.createLinkedPair();await server.connect(left);await client.connect(right);cleanups.push(()=>client.close(),()=>server.close());return client;}
 describe('MCP contracts',()=>{
+ it.each(['vivaldi','opera'])('passes the %s browser selection to the CLI',async(browser)=>{
+  const runner=vi.fn<CliRunner>().mockResolvedValue({items:[]});const client=await connect(runner);
+  const result=await client.callTool({name:'douban_query',arguments:{operation:'top250',transport:'browser',browser}});
+  expect(result.isError).not.toBe(true);expect(runner.mock.calls[0][1]).toEqual(expect.arrayContaining(['--read-browser',browser]));
+ });
  it('lists tools and reuses CLI read commands',async()=>{
   const runner=vi.fn<CliRunner>().mockResolvedValue({items:[]});const client=await connect(runner);
   const tools=await client.listTools();expect(tools.tools.some(t=>t.name==='douban_record_edit')).toBe(true);
